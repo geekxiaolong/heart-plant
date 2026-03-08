@@ -20,7 +20,7 @@ import {
   Area
 } from 'recharts';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -104,12 +104,8 @@ export const Monitoring = () => {
   const fetchPlants = useCallback(async () => {
     if (!session?.access_token) return;
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants?admin_view=true`, {
-        headers: { 
-          'X-User-JWT': session.access_token,
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey 
-        }
+      const response = await fetch(apiUrl('/plants?admin_view=true'), {
+        headers: await buildApiHeaders()
       });
       
       if (!response.ok) {

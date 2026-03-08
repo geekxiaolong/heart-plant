@@ -9,7 +9,7 @@ import { WebRTCPlayer } from '../components/WebRTCPlayer';
 import { useEmotionalTheme, EmotionalTheme } from '../context/ThemeContext';
 import { motion as Motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
@@ -305,12 +305,8 @@ export function Interaction() {
         return;
       }
 
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-        headers: { 
-          'X-User-JWT': token,
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/plants'), {
+        headers: await buildApiHeaders()
       });
       
       if (res.ok) {
@@ -579,7 +575,7 @@ export function Interaction() {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       const token = currentSession?.access_token;
 
-      await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/log-activity`, {
+      await fetch(apiUrl('/log-activity'), {
         method: 'POST',
         headers: {
           'apikey': publicAnonKey,

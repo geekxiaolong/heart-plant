@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
 import { WebRTCPlayer, WebRTCPlayerRef } from '../components/WebRTCPlayer';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 
 interface JournalEntry {
   id: string;
@@ -110,7 +110,7 @@ export function JournalWritePage() {
     setIsUploading(true);
     const uploadToast = toast.loading('正在上传生长瞬间...');
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-snapshot`, {
+      const response = await fetch(apiUrl('/upload-snapshot'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

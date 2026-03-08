@@ -7,6 +7,11 @@ import { supabase } from './supabaseClient';
 
 const API_BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-4b732228`;
 
+export function apiUrl(endpoint: string): string {
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  return `${API_BASE_URL}${normalized}`;
+}
+
 /**
  * 获取当前用户的 session token
  */
@@ -23,15 +28,14 @@ async function getSessionToken(): Promise<string | null> {
 /**
  * 构建标准请求头
  */
-async function buildHeaders(includeContentType: boolean = false): Promise<Record<string, string>> {
+export async function buildApiHeaders(includeContentType: boolean = false): Promise<Record<string, string>> {
   const token = await getSessionToken();
-  
+
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${publicAnonKey}`,
     'apikey': publicAnonKey,
   };
 
-  // 如果有有效的 token，添加 X-User-JWT header
   if (token && token !== 'undefined' && token !== 'null') {
     headers['X-User-JWT'] = token;
   }
@@ -47,23 +51,20 @@ async function buildHeaders(includeContentType: boolean = false): Promise<Record
  * 处理 API 响应
  */
 async function handleResponse<T>(response: Response): Promise<T> {
-  // 先检查 response 是否 ok
   if (!response.ok) {
     let errorMessage = `API Error: ${response.status} ${response.statusText}`;
-    
+
     try {
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
       console.error('API Error Details:', errorData);
     } catch (e) {
-      // 无法解析 JSON，使用状态文本
       console.error('API Error (non-JSON):', errorMessage);
     }
-    
+
     throw new Error(errorMessage);
   }
 
-  // 尝试解析 JSON
   try {
     const data = await response.json();
     return data as T;
@@ -77,15 +78,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
  * GET 请求
  */
 export async function apiGet<T>(endpoint: string): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const headers = await buildHeaders();
-  
+  const url = apiUrl(endpoint);
+  const headers = await buildApiHeaders();
+
   console.log(`[API GET] ${url}`);
-  
+
   try {
-    const response = await fetch(url, { 
+    const response = await fetch(url, {
       method: 'GET',
-      headers 
+      headers
     });
     return await handleResponse<T>(response);
   } catch (error) {
@@ -98,11 +99,11 @@ export async function apiGet<T>(endpoint: string): Promise<T> {
  * POST 请求
  */
 export async function apiPost<T>(endpoint: string, body?: any): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const headers = await buildHeaders(true);
-  
+  const url = apiUrl(endpoint);
+  const headers = await buildApiHeaders(true);
+
   console.log(`[API POST] ${url}`, body);
-  
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -120,11 +121,11 @@ export async function apiPost<T>(endpoint: string, body?: any): Promise<T> {
  * DELETE 请求
  */
 export async function apiDelete<T>(endpoint: string): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const headers = await buildHeaders();
-  
+  const url = apiUrl(endpoint);
+  const headers = await buildApiHeaders();
+
   console.log(`[API DELETE] ${url}`);
-  
+
   try {
     const response = await fetch(url, {
       method: 'DELETE',
@@ -141,11 +142,11 @@ export async function apiDelete<T>(endpoint: string): Promise<T> {
  * PUT 请求
  */
 export async function apiPut<T>(endpoint: string, body?: any): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const headers = await buildHeaders(true);
-  
+  const url = apiUrl(endpoint);
+  const headers = await buildApiHeaders(true);
+
   console.log(`[API PUT] ${url}`, body);
-  
+
   try {
     const response = await fetch(url, {
       method: 'PUT',

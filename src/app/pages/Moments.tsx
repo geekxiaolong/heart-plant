@@ -9,7 +9,7 @@ import { cn } from '../utils/cn';
 import { motion, AnimatePresence } from 'motion/react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { getCache, setCache } from '../utils/cache';
@@ -65,12 +65,8 @@ export function Moments() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/stats/${user.id}`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey,
-          'X-User-JWT': token || ''
-        }
+      const res = await fetch(apiUrl('/stats/${user.id}'), {
+        headers: await buildApiHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -129,14 +125,9 @@ export function Moments() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-url`, {
+      const res = await fetch(apiUrl('/upload-url'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey,
-          'X-User-JWT': token || ''
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({ 
           fileName: file.name,
           contentType: file.type
@@ -177,11 +168,8 @@ export function Moments() {
     const cacheKey = 'moments-feed';
     
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/moments'), {
+        headers: await buildApiHeaders()
       });
       if (res.ok && mountedRef.current) {
         const data = await res.json();
@@ -218,13 +206,9 @@ export function Moments() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments/${id}/like`, {
+      await fetch(apiUrl('/moments/${id}/like'), {
         method: 'POST',
-        headers: {
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+        headers: await buildApiHeaders()
       });
       toast.success('感谢你的点赞！✨');
     } catch (e) {
@@ -254,7 +238,7 @@ export function Moments() {
     setIsPublishing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments`, {
+      const res = await fetch(apiUrl('/moments'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -289,11 +273,8 @@ export function Moments() {
   const loadComments = async (momentId: string) => {
     setIsLoadingComments(true);
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments/${momentId}/comments`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/moments/${momentId}/comments'), {
+        headers: await buildApiHeaders()
       });
       if (res.ok && mountedRef.current) {
         const data = await res.json();
@@ -314,7 +295,7 @@ export function Moments() {
     setIsSubmittingComment(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments/${activeMomentId}/comments`, {
+      const res = await fetch(apiUrl('/moments/${activeMomentId}/comments'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -367,18 +348,14 @@ export function Moments() {
       
       if (isCurrentlyFollowing) {
         // Unfollow
-        await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/follow/${targetUserId}`, {
+        await fetch(apiUrl('/follow/${targetUserId}'), {
           method: 'DELETE',
-          headers: {
-            'X-User-JWT': session?.access_token || '',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey
-          }
+          headers: await buildApiHeaders()
         });
         toast.success('已取消关注');
       } else {
         // Follow
-        await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/follow`, {
+        await fetch(apiUrl('/follow'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -411,12 +388,8 @@ export function Moments() {
         const uniqueUserIds = [...new Set(moments.map(m => m.userId).filter(Boolean))];
         
         const statusPromises = uniqueUserIds.map(async (userId) => {
-          const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/is-following/${userId}`, {
-            headers: {
-              'X-User-JWT': session?.access_token || '',
-              'Authorization': `Bearer ${publicAnonKey}`,
-              'apikey': publicAnonKey
-            }
+          const res = await fetch(apiUrl('/is-following/${userId}'), {
+            headers: await buildApiHeaders()
           });
           if (res.ok) {
             const data = await res.json();

@@ -16,7 +16,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
 interface ClaimedPlant {
@@ -43,14 +43,10 @@ export const AdoptedPlants = () => {
   const fetchClaimedPlants = async () => {
     if (!session?.access_token) return;
     try {
-      const url = `https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants?admin_view=true`;
+      const url = apiUrl('/plants?admin_view=true');
       console.log('Fetching adoptions from:', url);
       const response = await fetch(url, {
-        headers: { 
-          'X-User-JWT': session.access_token,
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+        headers: await buildApiHeaders()
       });
       
       if (!response.ok) {

@@ -18,7 +18,7 @@ import {
   Heart
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
 interface TimelineItem {
@@ -55,11 +55,8 @@ export const PlantTimeline = () => {
   // Fetch all claimed plants for the selector
   const fetchPlants = async () => {
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const response = await fetch(apiUrl('/plants'), {
+        headers: await buildApiHeaders()
       });
       const data = await response.json();
       setPlants(data);
@@ -78,11 +75,8 @@ export const PlantTimeline = () => {
     if (!id) return;
     setTimelineLoading(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plant-timeline/${id}`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const response = await fetch(apiUrl('/plant-timeline/${id}'), {
+        headers: await buildApiHeaders()
       });
       const data = await response.json();
       setTimeline(data);

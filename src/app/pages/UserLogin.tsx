@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 
 export function UserLogin() {
   const [isLogin, setIsLogin] = useState(true);
@@ -45,7 +45,7 @@ export function UserLogin() {
         }
       } else {
         // Registration logic via custom server route to enable auto-confirm
-        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/signup`, {
+        const response = await fetch(apiUrl('/signup'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -13,7 +13,7 @@ import {
   History
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
 interface AdoptedPlant {
@@ -39,11 +39,8 @@ export const AdoptionManagement = () => {
 
   const fetchAdoptedPlants = async () => {
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const response = await fetch(apiUrl('/plants'), {
+        headers: await buildApiHeaders()
       });
       if (!response.ok) throw new Error('Failed to fetch adopted plants');
       const data = await response.json();

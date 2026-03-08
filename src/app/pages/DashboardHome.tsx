@@ -22,7 +22,7 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 
 const data = [
   { name: '周一', value: 45, color: '#22c55e' },
@@ -54,7 +54,7 @@ export const DashboardHome = () => {
           'X-User-JWT': session.access_token
         };
 
-        const libraryRes = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, { headers });
+        const libraryRes = await fetch(apiUrl('/library'), { headers });
         if (!libraryRes.ok) {
           const errText = await libraryRes.text();
           console.error('Library fetch failed:', errText);
@@ -70,7 +70,7 @@ export const DashboardHome = () => {
           throw jsonErr;
         }
         
-        const plantsRes = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants?admin_view=true`, { headers });
+        const plantsRes = await fetch(apiUrl('/plants?admin_view=true'), { headers });
         if (!plantsRes.ok) {
           const errText = await plantsRes.text();
           console.error('Plants fetch failed:', errText);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -413,12 +413,8 @@ export function PlantsTab() {
   const fetchLibrary = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey,
-          'X-User-JWT': session?.access_token || ''
-        }
+      const res = await fetch(apiUrl('/library'), {
+        headers: await buildApiHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -445,7 +441,7 @@ export function PlantsTab() {
 
   const handleAddPlant = async (data: PlantFormData) => {
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, {
+      const res = await fetch(apiUrl('/library'), {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${publicAnonKey}`,
@@ -467,7 +463,7 @@ export function PlantsTab() {
   const handleEditPlant = async (data: PlantFormData) => {
     if (!editingPlant) return;
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, {
+      const res = await fetch(apiUrl('/library'), {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${publicAnonKey}`,
@@ -490,13 +486,9 @@ export function PlantsTab() {
   const handleDeletePlant = async (id: number | string) => {
     if (confirm('确定要删除这个植物吗？此操作不可撤销。')) {
       try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library/${id}`, {
+      const res = await fetch(apiUrl('/library/${id}'), {
         method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey,
-          'X-User-JWT': session?.access_token || ''
-        }
+        headers: await buildApiHeaders()
       });
         if (res.ok) {
           await fetchLibrary();
@@ -511,7 +503,7 @@ export function PlantsTab() {
   const handleToggleStatus = async (id: number | string) => {
     const plant = plants.find(p => p.id === id);
     if (!plant) return;
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, {
+      const res = await fetch(apiUrl('/library'), {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${publicAnonKey}`,

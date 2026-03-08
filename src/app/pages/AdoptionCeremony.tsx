@@ -10,7 +10,7 @@ import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { motion as Motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 
@@ -40,12 +40,8 @@ export function AdoptionCeremony() {
         
         if (!token) return;
 
-        const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-          headers: { 
-            'X-User-JWT': token, 
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey 
-          }
+        const res = await fetch(apiUrl('/plants'), {
+          headers: await buildApiHeaders()
         });
         const data = await res.json();
         const found = data.find((p: any) => p.id === plantId);
@@ -74,7 +70,7 @@ export function AdoptionCeremony() {
         return;
       }
 
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/send-direct-invite`, {
+      const res = await fetch(apiUrl('/send-direct-invite'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -115,7 +111,7 @@ export function AdoptionCeremony() {
         return;
       }
 
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/generate-invite`, {
+      const res = await fetch(apiUrl('/generate-invite'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -333,7 +329,7 @@ export function JoinInvitation() {
       }
 
       const userName = user.user_metadata?.name || user.email?.split('@')[0] || '守护者';
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/accept-invite`, {
+      const res = await fetch(apiUrl('/accept-invite'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json', 

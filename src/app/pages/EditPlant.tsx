@@ -11,7 +11,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { apiGet } from '../utils/api';
 
 export const EditPlant = () => {
@@ -91,13 +91,9 @@ export const EditPlant = () => {
 
     setUploading(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-url`, {
+      const response = await fetch(apiUrl('/upload-url'), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({
           fileName: file.name,
           contentType: file.type
@@ -115,11 +111,8 @@ export const EditPlant = () => {
 
       if (!uploadResponse.ok) throw new Error('Failed to upload image');
 
-      const urlResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/image-url/${encodeURIComponent(path)}`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const urlResponse = await fetch(apiUrl('/image-url/${encodeURIComponent(path)}'), {
+        headers: await buildApiHeaders()
       });
       const { url } = await urlResponse.json();
 
@@ -154,13 +147,9 @@ export const EditPlant = () => {
 
     setLoading(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/library`, {
+      const response = await fetch(apiUrl('/library'), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({
           ...formData,
           id, // Maintain the same ID

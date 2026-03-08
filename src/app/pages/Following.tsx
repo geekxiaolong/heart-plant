@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { useEmotionalTheme } from '../context/ThemeContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -43,12 +43,8 @@ export function Following() {
     setIsLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/following`, {
-        headers: {
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/following'), {
+        headers: await buildApiHeaders()
       });
 
       if (res.ok && mountedRef.current) {
@@ -73,13 +69,9 @@ export function Following() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/follow/${targetUserId}`, {
+      const res = await fetch(apiUrl('/follow/${targetUserId}'), {
         method: 'DELETE',
-        headers: {
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+        headers: await buildApiHeaders()
       });
 
       if (res.ok && mountedRef.current) {

@@ -8,7 +8,7 @@ import {
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { motion as Motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../utils/supabaseClient';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { EmotionalRadarChart } from '../components/EmotionalRadarChart';
 import { GoldenSentenceCard } from '../components/GoldenSentenceCard';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
@@ -35,12 +35,8 @@ export default function PlantProfileDetail() {
       
       if (!token) return;
 
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-        headers: { 
-          'X-User-JWT': token, 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey 
-        }
+      const res = await fetch(apiUrl('/plants'), {
+        headers: await buildApiHeaders()
       });
       
       if (res.ok) {
@@ -59,7 +55,7 @@ export default function PlantProfileDetail() {
     if (!plantId) return;
     setTimelineLoading(true);
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plant-timeline/${plantId}?page=${pageNum}&limit=10`, {
+      const res = await fetch(apiUrl('/plant-timeline/${plantId}?page=${pageNum}&limit=10'), {
         headers: { 
           'Authorization': `Bearer ${publicAnonKey}`,
           'apikey': publicAnonKey 

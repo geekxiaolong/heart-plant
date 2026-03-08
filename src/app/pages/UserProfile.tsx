@@ -7,7 +7,7 @@ import { useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { useEmotionalTheme } from '../context/ThemeContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
@@ -59,11 +59,8 @@ export function UserProfile() {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/moments/user/${userId}'), {
+        headers: await buildApiHeaders()
       });
 
       if (res.ok && mountedRef.current) {
@@ -87,12 +84,8 @@ export function UserProfile() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/is-following/${userId}`, {
-        headers: {
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const res = await fetch(apiUrl('/is-following/${userId}'), {
+        headers: await buildApiHeaders()
       });
 
       if (res.ok && mountedRef.current) {
@@ -122,13 +115,9 @@ export function UserProfile() {
       
       if (isFollowing) {
         // Unfollow
-        await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/follow/${userId}`, {
+        await fetch(apiUrl('/follow/${userId}'), {
           method: 'DELETE',
-          headers: {
-            'X-User-JWT': session?.access_token || '',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey
-          }
+          headers: await buildApiHeaders()
         });
         if (mountedRef.current) {
           setIsFollowing(false);
@@ -136,7 +125,7 @@ export function UserProfile() {
         }
       } else {
         // Follow
-        await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/follow`, {
+        await fetch(apiUrl('/follow'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -166,12 +155,9 @@ export function UserProfile() {
   const handleLike = async (momentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/moments/${momentId}/like`, {
+      const res = await fetch(apiUrl('/moments/${momentId}/like'), {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+        headers: await buildApiHeaders()
       });
       
       if (res.ok && mountedRef.current) {

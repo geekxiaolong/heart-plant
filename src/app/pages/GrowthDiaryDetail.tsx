@@ -15,7 +15,7 @@ import {
   Heart
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 
 export const GrowthDiaryDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -28,7 +28,7 @@ export const GrowthDiaryDetail = () => {
   const fetchJournalDetail = async () => {
     try {
       // 1. Fetch the journal
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/journal-detail/${id}`, {
+      const response = await fetch(apiUrl('/journal-detail/${id}'), {
         headers: { Authorization: `Bearer ${publicAnonKey}` }
       });
       if (!response.ok) throw new Error('Failed to fetch journal');
@@ -37,7 +37,7 @@ export const GrowthDiaryDetail = () => {
 
       // 2. Fetch the plant info for context
       if (data.plantId) {
-        const plantResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
+        const plantResponse = await fetch(apiUrl('/plants'), {
           headers: { Authorization: `Bearer ${publicAnonKey}` }
         });
         const plants = await plantResponse.json();
@@ -55,7 +55,7 @@ export const GrowthDiaryDetail = () => {
   const handleToggleFeatured = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/journal-feature/${id}`, {
+      const response = await fetch(apiUrl('/journal-feature/${id}'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${publicAnonKey}` }
       });
@@ -76,7 +76,7 @@ export const GrowthDiaryDetail = () => {
     
     setIsProcessing(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/journal/${id}`, {
+      const response = await fetch(apiUrl('/journal/${id}'), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${publicAnonKey}` }
       });

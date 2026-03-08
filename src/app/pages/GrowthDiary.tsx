@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 
 export const GrowthDiary = () => {
   const navigate = useNavigate();
@@ -27,17 +27,14 @@ export const GrowthDiary = () => {
     setIsRefreshing(true);
     try {
       // 1. Fetch plants for mapping
-      const plantResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/plants`, {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        }
+      const plantResponse = await fetch(apiUrl('/plants'), {
+        headers: await buildApiHeaders()
       });
       const plantData = await plantResponse.json();
       setPlants(plantData);
 
     // 2. Fetch all journals using the new efficient endpoint
-    const url = `https://${projectId}.supabase.co/functions/v1/make-server-4b732228/all-journals`;
+    const url = apiUrl('/all-journals');
     console.log('Fetching journals from:', url);
     const journalResponse = await fetch(url, {
       headers: { 

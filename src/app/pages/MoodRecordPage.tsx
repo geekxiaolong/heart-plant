@@ -11,7 +11,7 @@ import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { getCache } from '../utils/cache';
 import { WebRTCPlayer, WebRTCPlayerRef } from '../components/WebRTCPlayer';
 
@@ -86,7 +86,7 @@ export function MoodRecordPage() {
     const uploadToast = toast.loading('正在保存直播瞬间...');
     
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-snapshot`, {
+      const response = await fetch(apiUrl('/upload-snapshot'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -148,7 +148,7 @@ export function MoodRecordPage() {
       
       const base64Image = await base64Promise;
 
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-snapshot`, {
+      const response = await fetch(apiUrl('/upload-snapshot'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

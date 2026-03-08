@@ -10,7 +10,7 @@ import { useNavigate, NavLink } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
 
 // Menu items for profile settings - v2.0.6
@@ -93,12 +93,8 @@ export function Profile() {
     const loadFollowing = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/following`, {
-          headers: {
-            'X-User-JWT': session?.access_token || '',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey
-          }
+        const res = await fetch(apiUrl('/following'), {
+          headers: await buildApiHeaders()
         });
 
         if (res.ok && mountedRef.current) {
@@ -114,7 +110,7 @@ export function Profile() {
 
     const loadUserStats = async () => {
       try {
-        const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/stats/${user.id}`, {
+        const res = await fetch(apiUrl('/stats/${user.id}'), {
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
             'apikey': publicAnonKey
@@ -161,14 +157,9 @@ export function Profile() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/upload-url`, {
+      const res = await fetch(apiUrl('/upload-url'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey,
-          'X-User-JWT': token || ''
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({ 
           fileName: file.name,
           contentType: file.type
@@ -216,7 +207,7 @@ export function Profile() {
     setIsUpdating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-4b732228/profile`, {
+      const res = await fetch(apiUrl('/profile'), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
