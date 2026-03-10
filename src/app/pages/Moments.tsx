@@ -11,8 +11,8 @@ import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../utils/supabaseClient';
 import { getCache, setCache } from '../utils/cache';
+import { getFollowingMapCacheKey, parseIsFollowingResponse, syncFollowingCache } from '../utils/follow';
 
 const reportData = {
   title: '三月情感成长报告',
@@ -51,7 +51,7 @@ export function Moments() {
 
   // Follow related
   const [followingMap, setFollowingMap] = useState<Record<string, boolean>>(() => {
-    if (user?.id) return getCache<Record<string, boolean>>(`following_map_${user.id}`) || {};
+    if (user?.id) return getCache<Record<string, boolean>>(getFollowingMapCacheKey(user.id)) || {};
     return {};
   });
 
@@ -62,10 +62,7 @@ export function Moments() {
   const fetchStats = async () => {
     if (!user?.id) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const res = await fetch(apiUrl('/stats/${user.id}'), {
+      const res = await fetch(apiUrl(`/stats/${user.id}`), {
         headers: await buildApiHeaders()
       });
       if (res.ok) {
@@ -122,9 +119,6 @@ export function Moments() {
 
     try {
       // 1. Get upload URL
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
       const res = await fetch(apiUrl('/upload-url'), {
         method: 'POST',
         headers: await buildApiHeaders(true),
@@ -205,8 +199,7 @@ export function Moments() {
     }));
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      await fetch(apiUrl('/moments/${id}/like'), {
+      await fetch(apiUrl(`/moments/${id}/like`), {
         method: 'POST',
         headers: await buildApiHeaders()
       });
@@ -237,15 +230,9 @@ export function Moments() {
     
     setIsPublishing(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(apiUrl('/moments'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({
           content: publishContent,
           tag: publishTag,
@@ -273,7 +260,7 @@ export function Moments() {
   const loadComments = async (momentId: string) => {
     setIsLoadingComments(true);
     try {
-      const res = await fetch(apiUrl('/moments/${momentId}/comments'), {
+      const res = await fetch(apiUrl(`/moments/${momentId}/comments`), {
         headers: await buildApiHeaders()
       });
       if (res.ok && mountedRef.current) {
@@ -294,15 +281,9 @@ export function Moments() {
     
     setIsSubmittingComment(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(apiUrl('/moments/${activeMomentId}/comments'), {
+      const res = await fetch(apiUrl(`/moments/${activeMomentId}/comments`), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers: await buildApiHeaders(true),
         body: JSON.stringify({ content: commentInput })
       });
       
@@ -344,29 +325,25 @@ export function Moments() {
     }));
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (isCurrentlyFollowing) {
-        // Unfollow
-        await fetch(apiUrl('/follow/${targetUserId}'), {
-          method: 'DELETE',
-          headers: await buildApiHeaders()
-        });
-        toast.success('已取消关注');
-      } else {
-        // Follow
-        await fetch(apiUrl('/follow'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-JWT': session?.access_token || '',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey
-          },
-          body: JSON.stringify({ targetUserId })
-        });
-        toast.success('关注成功 ✨');
+      const endpoint = isCurrentlyFollowing ? `/follow/${targetUserId}` : '/follow';
+      const res = await fetch(apiUrl(endpoint), {
+        method: isCurrentlyFollowing ? 'DELETE' : 'POST',
+        headers: await buildApiHeaders(!isCurrentlyFollowing),
+        body: isCurrentlyFollowing ? undefined : JSON.stringify({ targetUserId })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Follow request failed: ${res.status}`);
       }
+
+      if (user?.id) {
+        syncFollowingCache(user.id, targetUserId, !isCurrentlyFollowing, {
+          name: moments.find(m => m.userId === targetUserId)?.user,
+          avatar: moments.find(m => m.userId === targetUserId)?.avatar,
+        });
+      }
+
+      toast.success(isCurrentlyFollowing ? '已取消关注' : '关注成功 ✨');
     } catch (e) {
       console.error('Follow error:', e);
       // Revert optimistic update on error
@@ -374,6 +351,12 @@ export function Moments() {
         ...prev,
         [targetUserId]: isCurrentlyFollowing
       }));
+      if (user?.id) {
+        syncFollowingCache(user.id, targetUserId, isCurrentlyFollowing, {
+          name: moments.find(m => m.userId === targetUserId)?.user,
+          avatar: moments.find(m => m.userId === targetUserId)?.avatar,
+        });
+      }
       toast.error('操作失败，请重试');
     }
   };
@@ -384,16 +367,15 @@ export function Moments() {
 
     const loadFollowingStatus = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
         const uniqueUserIds = [...new Set(moments.map(m => m.userId).filter(Boolean))];
         
         const statusPromises = uniqueUserIds.map(async (userId) => {
-          const res = await fetch(apiUrl('/is-following/${userId}'), {
+          const res = await fetch(apiUrl(`/is-following/${userId}`), {
             headers: await buildApiHeaders()
           });
           if (res.ok) {
             const data = await res.json();
-            return [userId, data.isFollowing];
+            return [userId, parseIsFollowingResponse(data)];
           }
           return [userId, false];
         });
@@ -405,7 +387,7 @@ export function Moments() {
         });
         
         setFollowingMap(newFollowingMap);
-        setCache(`following_map_${user.id}`, newFollowingMap);
+        setCache(getFollowingMapCacheKey(user.id), newFollowingMap);
       } catch (e) {
         console.error('Error loading following status:', e);
       }

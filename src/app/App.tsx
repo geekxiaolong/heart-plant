@@ -50,6 +50,7 @@ const router = createHashRouter([
           { path: 'moments', element: <Moments /> },
           { path: 'profile', element: <Profile /> },
           { path: 'following', element: <Following /> },
+          { path: 'u/:userId', element: <UserProfile /> },
           { path: 'user/:userId', element: <UserProfile /> },
           { path: 'discover', element: <DiscoverPlants /> },
           { path: 'adopt/:id', element: <PlantAdoption /> },

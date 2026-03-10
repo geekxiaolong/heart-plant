@@ -1,24 +1,56 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  LayoutGrid, ShieldCheck, CircleHelp, LogOut, 
+import {
+  LayoutGrid, ShieldCheck, CircleHelp, LogOut,
   ChevronRight, Award, MapPin, SquarePen, Smartphone, Wifi, X, LoaderCircle, Camera, Save, Users
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate, NavLink } from 'react-router';
-import { useAuth } from '../context/AuthContext';
-import { supabase } from '../utils/supabaseClient';
+import { useAuth, supabase } from '../context/AuthContext';
 import { toast } from 'sonner';
-import { apiUrl, buildApiHeaders } from '../utils/api';
+import { apiRequest, apiRequestJson, getStoragePublicUrl } from '../utils/api';
+import { getFollowingListCacheKey, normalizeFollowingListResponse, subscribeFollowingUpdates } from '../utils/follow';
 import { getCache, setCache } from '../utils/cache';
+import { getProfileCacheKey } from '../utils/profile';
 
-// Menu items for profile settings - v2.0.6
 const menuItems = [
   { label: '硬件设置', sub: 'WiFi 传感器与摄像头绑定', icon: Wifi, color: 'text-blue-500', link: '/profile' },
   { label: '安全中心', sub: '账号与隐私管理', icon: ShieldCheck, color: 'text-green-500', link: '/profile' },
   { label: '帮助与支持', sub: '常见问题与反馈', icon: CircleHelp, color: 'text-gray-400', link: '/profile' },
 ];
+
+interface ProfileFormData {
+  name: string;
+  bio: string;
+  location: string;
+  avatar: string;
+}
+
+interface ProfilePayload {
+  id?: string;
+  email?: string;
+  name?: string;
+  bio?: string;
+  location?: string;
+  avatar?: string;
+  role?: string;
+  user_metadata?: Record<string, any>;
+}
+
+const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1633332755192-727a05c4013d?q=80&w=1080';
+
+function normalizeProfile(user: any, payload?: ProfilePayload | null): ProfileFormData {
+  const metadata = user?.user_metadata || {};
+  const nestedMetadata = payload?.user_metadata || {};
+
+  return {
+    name: payload?.name || nestedMetadata.name || metadata.name || user?.email?.split('@')[0] || '',
+    bio: payload?.bio || nestedMetadata.bio || metadata.bio || '',
+    location: payload?.location || nestedMetadata.location || metadata.location || '',
+    avatar: payload?.avatar || nestedMetadata.avatar || metadata.avatar || ''
+  };
+}
 
 export function Profile() {
   const { themeConfig } = useEmotionalTheme();
@@ -41,9 +73,7 @@ export function Profile() {
     if (user?.id) return getCache<any>(`stats_${user.id}`) || null;
     return null;
   });
-  
-  // Profile form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ProfileFormData>({
     name: '',
     bio: '',
     location: '',
@@ -54,14 +84,12 @@ export function Profile() {
   useEffect(() => {
     mountedRef.current = true;
     if (user) {
-      setFormData({
-        name: user.user_metadata?.name || user.email?.split('@')[0] || '',
-        bio: user.user_metadata?.bio || '',
-        location: user.user_metadata?.location || '',
-        avatar: user.user_metadata?.avatar || ''
-      });
-      setAvatarPreview(user.user_metadata?.avatar || '');
+      const cachedProfile = getCache<ProfileFormData>(getProfileCacheKey(user.id), 5 * 60 * 1000);
+      const nextProfile = cachedProfile || normalizeProfile(user);
+      setFormData(nextProfile);
+      setAvatarPreview(getStoragePublicUrl(nextProfile.avatar));
     }
+
     return () => {
       mountedRef.current = false;
       if (avatarPreview && avatarPreview.startsWith('blob:')) {
@@ -70,39 +98,54 @@ export function Profile() {
     };
   }, [user]);
 
-  // Load data from cache first
   useEffect(() => {
     if (!user) return;
-    
-    const cachedFollowing = getCache<any[]>(`following_${user.id}`);
+
+    const cachedFollowing = getCache<any[]>(getFollowingListCacheKey(user.id));
     if (cachedFollowing) {
       setFollowingList(cachedFollowing);
       setFollowingCount(cachedFollowing.length);
     }
 
+    const unsubscribe = subscribeFollowingUpdates((event) => {
+      if (event.detail?.userId !== user.id) return;
+      setFollowingList(event.detail.followingList || []);
+      setFollowingCount(event.detail.followingCount || 0);
+    });
+
     const cachedStats = getCache<any>(`stats_${user.id}`);
     if (cachedStats) {
       setUserStats(cachedStats);
     }
+
+    return unsubscribe;
   }, [user]);
 
-  // Load following list
   useEffect(() => {
     if (!user) return;
 
+    const loadProfile = async () => {
+      try {
+        const data = await apiRequestJson<ProfilePayload>('/profile');
+        if (!mountedRef.current) return;
+
+        const normalized = normalizeProfile(user, data);
+        setFormData(normalized);
+        setCache(getProfileCacheKey(user.id), normalized);
+        setAvatarPreview(prev => prev.startsWith('blob:') ? prev : getStoragePublicUrl(normalized.avatar));
+      } catch (e) {
+        console.error('Error loading profile:', e);
+      }
+    };
+
     const loadFollowing = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(apiUrl('/following'), {
-          headers: await buildApiHeaders()
-        });
+        const data = normalizeFollowingListResponse(await apiRequestJson('/following'));
+        if (!mountedRef.current) return;
 
-        if (res.ok && mountedRef.current) {
-          const data = await res.json();
-          setFollowingList(data);
-          setFollowingCount(data.length);
-          setCache(`following_${user.id}`, data);
-        }
+        setFollowingList(data);
+        setFollowingCount(data.length);
+        setCache(getFollowingListCacheKey(user.id), data);
       } catch (e) {
         console.error('Error loading following list:', e);
       }
@@ -110,28 +153,21 @@ export function Profile() {
 
     const loadUserStats = async () => {
       try {
-        const res = await fetch(apiUrl('/stats/${user.id}'), {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'apikey': publicAnonKey
-          }
-        });
+        const data = await apiRequestJson(`/stats/${user.id}`);
+        if (!mountedRef.current) return;
 
-        if (res.ok && mountedRef.current) {
-          const data = await res.json();
-          setUserStats(data);
-          setCache(`stats_${user.id}`, data);
-        }
+        setUserStats(data);
+        setCache(`stats_${user.id}`, data);
       } catch (e) {
         console.error('Error loading user stats:', e);
       }
     };
 
+    loadProfile();
     loadFollowing();
     loadUserStats();
   }, [user]);
 
-  // Cleanup avatar preview URL when it changes
   useEffect(() => {
     return () => {
       if (avatarPreview && avatarPreview.startsWith('blob:')) {
@@ -154,23 +190,15 @@ export function Profile() {
     setAvatarPreview(objectUrl);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const res = await fetch(apiUrl('/upload-url'), {
+      const uploadData = await apiRequestJson<{ uploadUrl: string; path: string }>('/upload-url', {
         method: 'POST',
-        headers: await buildApiHeaders(true),
-        body: JSON.stringify({ 
+        body: {
           fileName: file.name,
           contentType: file.type
-        })
+        }
       });
 
-      if (!res.ok) throw new Error('Failed to get upload URL');
-      
-      const { uploadUrl, path } = await res.json();
-
-      const uploadRes = await fetch(uploadUrl, {
+      const uploadRes = await fetch(uploadData.uploadUrl, {
         method: 'PUT',
         headers: {
           'Content-Type': file.type
@@ -181,14 +209,14 @@ export function Profile() {
       if (!uploadRes.ok) throw new Error('Upload failed');
 
       if (mountedRef.current) {
-        setFormData(prev => ({ ...prev, avatar: `storage:${path}` }));
+        setFormData(prev => ({ ...prev, avatar: `storage:${uploadData.path}` }));
         toast.success('头像上传成功');
       }
     } catch (error) {
       console.error('Avatar upload error:', error);
       if (mountedRef.current) {
         toast.error('头像上传失败，请重试');
-        setAvatarPreview(formData.avatar);
+        setAvatarPreview(getStoragePublicUrl(formData.avatar));
       }
     } finally {
       if (mountedRef.current) {
@@ -206,28 +234,61 @@ export function Profile() {
 
     setIsUpdating(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(apiUrl('/profile'), {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-JWT': session?.access_token || '',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
-        body: JSON.stringify(formData)
-      });
+      const payload = {
+        name: formData.name.trim(),
+        bio: formData.bio.trim(),
+        location: formData.location.trim(),
+        avatar: formData.avatar,
+      };
 
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Failed to update profile');
+      let updateSource = 'profile-route';
+      let savedProfile = payload;
+
+      try {
+        const profileResponse = await apiRequest('/profile', {
+          method: 'PUT',
+          body: payload,
+        });
+
+        const responsePayload = await profileResponse.json().catch(() => null);
+        if (!profileResponse.ok) {
+          throw new Error(responsePayload?.error || 'Profile route not available');
+        }
+
+        const profileFromServer = responsePayload?.profile || responsePayload;
+        savedProfile = {
+          name: profileFromServer?.name || payload.name,
+          bio: profileFromServer?.bio || '',
+          location: profileFromServer?.location || '',
+          avatar: profileFromServer?.avatar || '',
+        };
+      } catch (apiError) {
+        updateSource = 'supabase-auth';
+        const { data, error } = await supabase.auth.updateUser({
+          data: payload,
+        });
+
+        if (error) throw error;
+
+        savedProfile = {
+          name: data.user?.user_metadata?.name || payload.name,
+          bio: data.user?.user_metadata?.bio || payload.bio,
+          location: data.user?.user_metadata?.location || payload.location,
+          avatar: data.user?.user_metadata?.avatar || payload.avatar,
+        };
+      }
+
+      await supabase.auth.refreshSession();
+
+      if (user?.id) {
+        setCache(getProfileCacheKey(user.id), savedProfile);
       }
 
       if (mountedRef.current) {
-        toast.success('资料更新成功！✨');
+        setFormData(savedProfile);
+        setAvatarPreview(getStoragePublicUrl(savedProfile.avatar));
         setShowEditModal(false);
-        // Refresh session/user metadata locally if needed, but the auth listener should pick it up
-        // Removed window.location.reload() to prevent iframe message port destruction
+        toast.success(updateSource === 'profile-route' ? '资料更新成功！✨' : '资料已同步到账号资料 ✨');
       }
     } catch (error: any) {
       console.error('Profile update error:', error);
@@ -252,45 +313,45 @@ export function Profile() {
     }
   };
 
+  const displayAvatar = avatarPreview || getStoragePublicUrl(formData.avatar) || DEFAULT_AVATAR;
+
   return (
     <div className="flex flex-col gap-8 p-6 pb-32">
-      {/* Profile Header */}
       <header className="flex flex-col items-center gap-6 pt-8">
         <div className="relative">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="w-32 h-32 rounded-[48px] bg-white shadow-2xl p-2 border-4 border-white overflow-hidden relative"
           >
-            <img 
-              src={avatarPreview || "https://images.unsplash.com/photo-1633332755192-727a05c4013d?q=80&w=1080"} 
+            <img
+              src={displayAvatar}
               className="w-full h-full object-cover rounded-[40px]"
               alt="Avatar"
             />
           </motion.div>
-          <button 
+          <button
             onClick={() => setShowEditModal(true)}
             className="absolute -bottom-2 -right-2 w-10 h-10 rounded-2xl bg-black text-white flex items-center justify-center shadow-xl active:scale-90 transition-all"
           >
-             <SquarePen size={18} />
+            <SquarePen size={18} />
           </button>
         </div>
-        
+
         <div className="text-center">
-          <h2 className="text-3xl font-black tracking-tighter">{user?.user_metadata?.name || user?.email?.split('@')[0] || '访客用户'}</h2>
+          <h2 className="text-3xl font-black tracking-tighter">{formData.name || user?.email?.split('@')[0] || '访客用户'}</h2>
           <div className="flex items-center gap-2 mt-2 opacity-40 justify-center">
              <MapPin size={14} />
-             <span className="text-[10px] font-black uppercase tracking-widest">{user?.user_metadata?.location || user?.email || 'OFFLINE'}</span>
+             <span className="text-[10px] font-black uppercase tracking-widest">{formData.location || user?.email || 'OFFLINE'}</span>
           </div>
-          {user?.user_metadata?.bio && (
-            <p className="text-sm text-gray-600 mt-3 px-8">{user.user_metadata.bio}</p>
+          {formData.bio && (
+            <p className="text-sm text-gray-600 mt-3 px-8">{formData.bio}</p>
           )}
         </div>
       </header>
 
-      {/* Stats Grid */}
       <div className="grid grid-cols-3 gap-4">
-        <button 
+        <button
           onClick={() => navigate('/following')}
           className="bg-white p-5 rounded-[32px] shadow-sm border border-black/5 flex flex-col items-center gap-3 transition-all hover:shadow-md active:scale-95 cursor-pointer"
         >
@@ -303,7 +364,7 @@ export function Profile() {
           </div>
         </button>
 
-        <button 
+        <button
           onClick={() => navigate('/achievements')}
           className="bg-white p-5 rounded-[32px] shadow-sm border border-black/5 flex flex-col items-center gap-3 transition-all hover:shadow-md active:scale-95 cursor-pointer"
         >
@@ -316,7 +377,7 @@ export function Profile() {
           </div>
         </button>
 
-        <button 
+        <button
           onClick={() => navigate('/')}
           className="bg-white p-5 rounded-[32px] shadow-sm border border-black/5 flex flex-col items-center gap-3 transition-all hover:shadow-md active:scale-95 cursor-pointer"
         >
@@ -330,12 +391,11 @@ export function Profile() {
         </button>
       </div>
 
-      {/* Menu List */}
       <div className="flex flex-col gap-4">
         {isUserAdmin && (
           <div className="mb-4">
              <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2 mb-2">系统管理</h3>
-             <button 
+             <button
                 onClick={() => navigate('/admin')}
                 className="w-full flex items-center justify-between p-5 rounded-[32px] bg-green-50/50 border border-green-100 hover:bg-green-50 transition-all active:scale-98 group"
              >
@@ -355,13 +415,13 @@ export function Profile() {
         <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-2 mb-2">应用设置</h3>
         <div className="bg-white rounded-[48px] shadow-sm border border-black/5 overflow-hidden p-4 flex flex-col gap-2">
           {menuItems.map((item, i) => (
-            <NavLink 
+            <NavLink
               key={i}
               to={item.link}
               className="flex items-center justify-between p-5 rounded-[32px] hover:bg-gray-50 transition-all active:scale-98 group"
             >
               <div className="flex items-center gap-5">
-                <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center bg-gray-50 group-hover:bg-white transition-colors", item.color)}>
+                <div className={cn('w-12 h-12 rounded-2xl flex items-center justify-center bg-gray-50 group-hover:bg-white transition-colors', item.color)}>
                    <item.icon size={24} />
                 </div>
                 <div className="text-left">
@@ -375,8 +435,7 @@ export function Profile() {
         </div>
       </div>
 
-      {/* Logout */}
-      <button 
+      <button
         onClick={handleLogout}
         className="flex items-center justify-center gap-3 p-6 rounded-[32px] bg-red-50 text-red-500 font-black text-xs uppercase tracking-widest active:scale-95 transition-all mt-4 border border-red-100 hover:bg-red-100"
       >
@@ -384,16 +443,14 @@ export function Profile() {
         退出登录
       </button>
 
-      {/* App Info Footer */}
       <div className="text-center mt-4">
          <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em]">HeartPlant v2.0.4</p>
          <p className="text-[10px] font-bold text-gray-200 mt-1 italic italic">Made with Love & Sensors</p>
       </div>
 
-      {/* Edit Profile Modal */}
       <AnimatePresence>
         {showEditModal && (
-          <div 
+          <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-6"
             onClick={(e) => {
               if (e.target === e.currentTarget) {
@@ -407,7 +464,6 @@ export function Profile() {
               exit={{ y: '100%', opacity: 0 }}
               className="bg-white rounded-[48px] shadow-2xl w-full max-w-lg overflow-hidden"
             >
-              {/* Header */}
               <div className="flex items-center justify-between p-8 border-b border-black/5">
                 <h3 className="text-2xl font-black tracking-tight">编辑资料</h3>
                 <button
@@ -418,19 +474,17 @@ export function Profile() {
                 </button>
               </div>
 
-              {/* Content */}
               <div className="p-8 flex flex-col gap-6">
-                {/* Avatar Upload */}
                 <div className="flex flex-col items-center gap-4">
                   <div className="relative">
                     <div className="w-28 h-28 rounded-[40px] bg-white shadow-xl p-2 border-4 border-white overflow-hidden">
-                      <img 
-                        src={avatarPreview || "https://images.unsplash.com/photo-1633332755192-727a05c4013d?q=80&w=1080"} 
+                      <img
+                        src={displayAvatar}
                         className="w-full h-full object-cover rounded-[32px]"
                         alt="Avatar Preview"
                       />
                     </div>
-                    <button 
+                    <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploading}
                       className="absolute -bottom-2 -right-2 w-12 h-12 rounded-2xl bg-black text-white flex items-center justify-center shadow-xl active:scale-90 transition-all disabled:opacity-50"
@@ -448,7 +502,6 @@ export function Profile() {
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">点击相机图标上传头像</p>
                 </div>
 
-                {/* Form Fields */}
                 <div className="flex flex-col gap-4">
                   <div>
                     <label className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2 block">用户名</label>
@@ -484,7 +537,6 @@ export function Profile() {
                   </div>
                 </div>
 
-                {/* Save Button */}
                 <button
                   onClick={handleUpdateProfile}
                   disabled={isUpdating || !formData.name.trim()}

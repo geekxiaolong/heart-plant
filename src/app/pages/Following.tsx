@@ -1,29 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  ChevronLeft, UserMinus, MapPin, Calendar, Heart, Loader2, UserX, Sparkles
-} from 'lucide-react';
+import { ChevronLeft, UserMinus, Calendar, Heart, Loader2, UserX } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../utils/supabaseClient';
 import { useEmotionalTheme } from '../context/ThemeContext';
-import { apiUrl, buildApiHeaders } from '../utils/api';
+import { apiUrl, buildApiHeaders, getStoragePublicUrl } from '../utils/api';
+import { getFollowingListCacheKey, normalizeFollowingListResponse, subscribeFollowingUpdates, syncFollowingCache, type NormalizedFollowingUser } from '../utils/follow';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../utils/cn';
-
-interface FollowingUser {
-  followerId: string;
-  followerName: string;
-  followerAvatar: string;
-  targetUserId: string;
-  timestamp: string;
-}
+import { setCache } from '../utils/cache';
+import { getPublicProfilePath } from '../utils/profile';
 
 export function Following() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { themeConfig } = useEmotionalTheme();
-  const [followingList, setFollowingList] = useState<FollowingUser[]>([]);
+  const [followingList, setFollowingList] = useState<NormalizedFollowingUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [unfollowingIds, setUnfollowingIds] = useState<Set<string>>(new Set());
   const mountedRef = useRef(true);
@@ -31,9 +23,15 @@ export function Following() {
   useEffect(() => {
     mountedRef.current = true;
     loadFollowing();
+
+    const unsubscribe = subscribeFollowingUpdates((event) => {
+      if (event.detail?.userId !== user?.id) return;
+      setFollowingList(event.detail.followingList || []);
+    });
     
     return () => {
       mountedRef.current = false;
+      unsubscribe();
     };
   }, [user]);
 
@@ -42,14 +40,14 @@ export function Following() {
 
     setIsLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(apiUrl('/following'), {
         headers: await buildApiHeaders()
       });
 
       if (res.ok && mountedRef.current) {
-        const data = await res.json();
+        const data = normalizeFollowingListResponse(await res.json());
         setFollowingList(data);
+        setCache(getFollowingListCacheKey(user.id), data);
       }
     } catch (e) {
       console.error('Error loading following list:', e);
@@ -67,16 +65,14 @@ export function Following() {
     setUnfollowingIds(prev => new Set(prev).add(targetUserId));
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      const res = await fetch(apiUrl('/follow/${targetUserId}'), {
+      const res = await fetch(apiUrl(`/follow/${targetUserId}`), {
         method: 'DELETE',
         headers: await buildApiHeaders()
       });
 
-      if (res.ok && mountedRef.current) {
-        // Remove from list
-        setFollowingList(prev => prev.filter(f => f.targetUserId !== targetUserId));
+      if (res.ok && mountedRef.current && user?.id) {
+        const next = syncFollowingCache(user.id, targetUserId, false);
+        setFollowingList(next.followingList);
         toast.success('已取消关注');
       }
     } catch (e) {
@@ -176,13 +172,13 @@ export function Following() {
                   <div className="flex items-center gap-4 flex-1 min-w-0">
                     {/* Avatar */}
                     <button
-                      onClick={() => navigate(`/user/${followUser.targetUserId}`)}
+                      onClick={() => navigate(getPublicProfilePath(followUser.targetUserId))}
                       className="w-16 h-16 rounded-[24px] overflow-hidden bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-black text-xl shadow-lg flex-shrink-0 active:scale-95 transition-all cursor-pointer"
                     >
                       {followUser.followerAvatar ? (
                         followUser.followerAvatar.startsWith('storage:') ? (
                           <img 
-                            src={`https://${projectId}.supabase.co/storage/v1/object/public/make-4b732228-plants/${followUser.followerAvatar.replace('storage:', '')}`}
+                            src={getStoragePublicUrl(followUser.followerAvatar)}
                             className="w-full h-full object-cover"
                             alt={followUser.followerName}
                             onError={(e) => {
@@ -218,7 +214,7 @@ export function Following() {
                         <span>{formatDate(followUser.timestamp)}</span>
                       </div>
                       <p className="text-xs text-gray-500 mt-1 font-medium">
-                        ID: {followUser.targetUserId.slice(0, 8)}...
+                        ID: {(followUser.targetUserId || '').slice(0, 8)}...
                       </p>
                     </div>
                   </div>
