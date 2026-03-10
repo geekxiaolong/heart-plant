@@ -5,11 +5,23 @@
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import { supabase } from './supabaseClient';
 
-const API_BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-4b732228`;
+const STORAGE_BUCKET = 'make-4b732228-plants';
+
+const API_BASE_URL = (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
+  ? 'http://127.0.0.1:8000'
+  : `https://${projectId}.supabase.co/functions/v1/make-server-4b732228`;
 
 export function apiUrl(endpoint: string): string {
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   return `${API_BASE_URL}${normalized}`;
+}
+
+export function getStoragePublicUrl(path?: string | null): string {
+  if (!path) return '';
+  if (!path.startsWith('storage:')) return path;
+
+  const normalizedPath = path.replace(/^storage:/, '').replace(/^\/+/, '');
+  return `https://${projectId}.supabase.co/storage/v1/object/public/${STORAGE_BUCKET}/${normalizedPath}`;
 }
 
 /**
@@ -32,11 +44,11 @@ export async function buildApiHeaders(includeContentType: boolean = false): Prom
   const token = await getSessionToken();
 
   const headers: Record<string, string> = {
-    'Authorization': `Bearer ${publicAnonKey}`,
     'apikey': publicAnonKey,
   };
 
   if (token && token !== 'undefined' && token !== 'null') {
+    headers['Authorization'] = `Bearer ${token}`;
     headers['X-User-JWT'] = token;
   }
 
@@ -45,6 +57,89 @@ export async function buildApiHeaders(includeContentType: boolean = false): Prom
   }
 
   return headers;
+}
+
+async function parseResponseBody(response: Response): Promise<any> {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (contentType.includes('application/json')) {
+    try {
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to parse JSON response:', error);
+      return null;
+    }
+  }
+
+  try {
+    const text = await response.text();
+    return text || null;
+  } catch (error) {
+    console.error('Failed to read response text:', error);
+    return null;
+  }
+}
+
+export interface ApiRequestOptions extends Omit<RequestInit, 'headers' | 'body'> {
+  includeContentType?: boolean;
+  body?: any;
+  headers?: Record<string, string>;
+}
+
+/**
+ * 底层请求方法：统一认证头、JSON body、错误处理
+ */
+export async function apiRequest(endpoint: string, options: ApiRequestOptions = {}): Promise<Response> {
+  const {
+    includeContentType = false,
+    body,
+    headers: customHeaders,
+    ...rest
+  } = options;
+
+  const shouldIncludeContentType = includeContentType || (body !== undefined && !(body instanceof FormData));
+  const headers = {
+    ...(await buildApiHeaders(shouldIncludeContentType)),
+    ...(customHeaders || {}),
+  };
+
+  const requestBody = body === undefined || body instanceof FormData || typeof body === 'string'
+    ? body
+    : JSON.stringify(body);
+
+  return fetch(apiUrl(endpoint), {
+    ...rest,
+    headers,
+    body: requestBody,
+  });
+}
+
+/**
+ * JSON 请求：支持候选端点回退，适配后端路由差异
+ */
+export async function apiRequestJson<T>(endpoints: string | string[], options: ApiRequestOptions = {}): Promise<T> {
+  const candidates = Array.isArray(endpoints) ? endpoints : [endpoints];
+  let lastError: Error | null = null;
+
+  for (const endpoint of candidates) {
+    try {
+      const response = await apiRequest(endpoint, options);
+      const payload = await parseResponseBody(response);
+
+      if (!response.ok) {
+        const message = (payload && typeof payload === 'object' && ((payload as any).error || (payload as any).message))
+          || `API Error: ${response.status} ${response.statusText}`;
+        throw new Error(String(message));
+      }
+
+      return payload as T;
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`[API Request Error] ${endpoint}:`, error);
+    }
+  }
+
+  throw lastError || new Error('API request failed');
 }
 
 /**

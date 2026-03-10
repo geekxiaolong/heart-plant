@@ -5,7 +5,8 @@ import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
-import { apiUrl, buildApiHeaders } from '../utils/api';
+import { apiUrl } from '../utils/api';
+import { publicAnonKey } from '/utils/supabase/info';
 
 export function UserLogin() {
   const [isLogin, setIsLogin] = useState(true);
@@ -16,6 +17,26 @@ export function UserLogin() {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { session } = useAuth();
+
+  const loginWithPassword = async () => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      toast.error(error.message === 'Invalid login credentials' ? '账号或密码错误' : error.message);
+      return false;
+    }
+
+    if (data.session) {
+      toast.success('欢迎回到心植世界');
+      navigate('/');
+      return true;
+    }
+
+    return false;
+  };
 
   useEffect(() => {
     if (session) {
@@ -29,27 +50,13 @@ export function UserLogin() {
 
     try {
       if (isLogin) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) {
-          toast.error(error.message === 'Invalid login credentials' ? '账号或密码错误' : error.message);
-          return;
-        }
-
-        if (data.session) {
-          toast.success('欢迎回到心植世界');
-          navigate('/');
-        }
+        await loginWithPassword();
       } else {
         // Registration logic via custom server route to enable auto-confirm
         const response = await fetch(apiUrl('/signup'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
             'apikey': publicAnonKey
           },
           body: JSON.stringify({ email, password, name })
@@ -61,10 +68,7 @@ export function UserLogin() {
           if (result.code === 'USER_ALREADY_EXISTS' || result.error?.includes('already been registered')) {
             toast.info('该邮箱已被注册，正在为您切换到登录模式...');
             setIsLogin(true);
-            // Optional: wait a tiny bit and auto-try login if password was provided
-            setTimeout(() => {
-              handleSubmit(e); // Retry as login
-            }, 1000);
+            await loginWithPassword();
           } else {
             toast.error(result.error || '注册失败');
           }
@@ -72,18 +76,12 @@ export function UserLogin() {
         }
 
         toast.success('注册成功！正在为您自动登录...');
-        
-        // Auto-login after successful registration
-        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
 
-        if (loginError) {
+        // Auto-login after successful registration
+        const loggedIn = await loginWithPassword();
+        if (!loggedIn) {
           setIsLogin(true);
           toast.info('请尝试手动登录');
-        } else if (loginData.session) {
-          navigate('/');
         }
       }
     } catch (err) {

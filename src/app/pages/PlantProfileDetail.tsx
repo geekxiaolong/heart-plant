@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { motion as Motion, AnimatePresence } from 'motion/react';
-import { supabase } from '../utils/supabaseClient';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 import { EmotionalRadarChart } from '../components/EmotionalRadarChart';
 import { GoldenSentenceCard } from '../components/GoldenSentenceCard';
@@ -30,11 +29,6 @@ export default function PlantProfileDetail() {
 
   const fetchPlant = useCallback(async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      if (!token) return;
-
       const res = await fetch(apiUrl('/plants'), {
         headers: await buildApiHeaders()
       });
@@ -55,11 +49,8 @@ export default function PlantProfileDetail() {
     if (!plantId) return;
     setTimelineLoading(true);
     try {
-      const res = await fetch(apiUrl('/plant-timeline/${plantId}?page=${pageNum}&limit=10'), {
-        headers: { 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey 
-        }
+      const res = await fetch(apiUrl(`/plant-timeline/${plantId}?page=${pageNum}&limit=10`), {
+        headers: await buildApiHeaders()
       });
       
       if (res.ok) {
