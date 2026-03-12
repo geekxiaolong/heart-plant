@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { apiUrl, buildApiHeaders } from '../utils/api';

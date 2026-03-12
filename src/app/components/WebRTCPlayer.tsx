@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef, ForwardRefRenderFunction } from 'react';
 import { Wifi, WifiOff, Loader, AlertCircle, RefreshCw } from 'lucide-react';
+import { getStreamWhepUrl } from '../utils/streamUrl';
 
 export interface WebRTCPlayerRef {
   captureFrame: () => string | null;
@@ -43,12 +44,8 @@ const WebRTCPlayerRender: ForwardRefRenderFunction<WebRTCPlayerRef, WebRTCPlayer
   const isRtsp = streamUrl.startsWith('rtsp://');
 
   // If someone passed an RTSP URL as streamUrl (which should be HTTP/WHEP), 
-  // we fix it by using it as rtspUrl and falling back to a default WHEP URL
-  const effectiveStreamUrl = isRtsp 
-    ? (streamUrl.includes('192.168.92.202') 
-        ? 'http://192.168.92.202:8889/heartplant/whep' 
-        : 'http://192.168.92.162:8889/heartplant/whep')
-    : streamUrl;
+  // we fix it by using it as rtspUrl and falling back to the app's WHEP URL (走代理时无 CORS)
+  const effectiveStreamUrl = isRtsp ? getStreamWhepUrl('heartplant') : streamUrl;
     
   const effectiveRtspUrl = isRtsp ? streamUrl : rtspUrl;
   
@@ -271,8 +268,8 @@ const WebSocketStreamPlayer = forwardRef(WebSocketStreamPlayerRender);
  */
 const WebRTCStreamPlayerRender: ForwardRefRenderFunction<any, WebRTCPlayerProps> = (props, ref) => {
   const {
-    streamUrl = 'http://192.168.92.162:8889/heartplant/whep',
-    rtspUrl = 'rtsp://admin:reolink123@192.168.92.202:554',
+    streamUrl = getStreamWhepUrl('heartplant'),
+    rtspUrl = (import.meta.env.VITE_DEFAULT_RTSP_URL || ''),
     className = '',
     onError,
     onConnected,

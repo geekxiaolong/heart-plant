@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { 
   ArrowLeft, Smile, Meh, Frown, Heart, Star, 
   Cloud, Sun, Moon, Coffee, Music, Book,
@@ -13,7 +13,10 @@ import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 import { getCache } from '../utils/cache';
+import { findPlantByAnyId, getPrimaryPlantId } from '../utils/plantIdentity';
+import { hydrateMoodSubmission } from '../utils/recordRefresh';
 import { WebRTCPlayer, WebRTCPlayerRef } from '../components/WebRTCPlayer';
+import { getStreamWhepUrl } from '../utils/streamUrl';
 
 const moodEmojis = [
   { id: 'happy', icon: Smile, label: '开心', color: 'text-yellow-500', bg: 'bg-yellow-50' },
@@ -38,6 +41,7 @@ export function MoodRecordPage() {
   const { plantId } = useParams();
   const { theme, themeConfig } = useEmotionalTheme();
   const isSoloMode = theme === 'solo';
+  const resolvedPlantId = getPrimaryPlantId(plantId);
   
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [content, setContent] = useState('');
@@ -54,7 +58,7 @@ export function MoodRecordPage() {
       try {
         const cached = getCache<any[]>(`plants-current`, 60000);
         if (cached) {
-          const found = cached.find((p: any) => p.id === plantId);
+          const found = findPlantByAnyId(cached, resolvedPlantId || plantId);
           if (found) {
             setPlantData(found);
             return;
@@ -63,7 +67,7 @@ export function MoodRecordPage() {
         
         const data = await apiGet<any[]>('/plants');
         if (Array.isArray(data)) {
-          const found = data.find((p: any) => p.id === plantId);
+          const found = findPlantByAnyId(data, resolvedPlantId || plantId);
           if (found) setPlantData(found);
         }
       } catch (e) {
@@ -71,7 +75,7 @@ export function MoodRecordPage() {
       }
     };
     fetchPlant();
-  }, [plantId]);
+  }, [plantId, resolvedPlantId]);
 
   const handleCapture = async () => {
     if (!playerRef.current) return;
@@ -95,7 +99,7 @@ export function MoodRecordPage() {
         },
         body: JSON.stringify({
           image: base64Image,
-          plantId: plantId
+          plantId: resolvedPlantId || plantId
         })
       });
 
@@ -157,7 +161,7 @@ export function MoodRecordPage() {
         },
         body: JSON.stringify({
           image: base64Image,
-          plantId: plantId
+          plantId: resolvedPlantId || plantId
         })
       });
 
@@ -187,7 +191,7 @@ export function MoodRecordPage() {
     setIsSubmitting(true);
     try {
       await apiPost('/mood', {
-        plantId,
+        plantId: resolvedPlantId || plantId,
         mood: selectedMood,
         content,
         tags: selectedTags,
@@ -195,8 +199,16 @@ export function MoodRecordPage() {
         timestamp: new Date().toISOString(),
       });
 
-      // Navigate first to ensure immediate response
-      navigate(-1);
+      hydrateMoodSubmission({
+        plantId: resolvedPlantId || plantId,
+        originalId: plantData?.originalId,
+        mood: selectedMood,
+        content: content.trim(),
+        tags: selectedTags,
+        imageUrl: uploadedImageUrl,
+      });
+
+      navigate('/interaction', { state: { plantId: resolvedPlantId || plantId, originalId: plantData?.originalId }, replace: true });
       toast.success(isSoloMode ? '成长记录已保存 🌱' : '心情记录已保存 💚');
     } catch (error: any) {
       console.error('Error saving mood:', error);
@@ -368,7 +380,7 @@ export function MoodRecordPage() {
                 <div className="relative aspect-video rounded-[32px] overflow-hidden border border-black/5 bg-black group">
                   <WebRTCPlayer 
                     ref={playerRef}
-                    streamUrl={`http://192.168.92.162:8889/${plantData?.streamPath || 'heartplant'}/whep`}
+                    streamUrl={getStreamWhepUrl(plantData?.streamPath)}
                     rtspUrl={plantData?.streamUrl}
                     className="w-full h-full"
                   />

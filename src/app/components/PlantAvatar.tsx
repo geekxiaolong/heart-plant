@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { motion as Motion } from 'motion/react';
+import { motion as Motion } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { Succulent, Cactus, Pothos, Sunflower, Monstera, SnakePlant } from './PlantCharacters';
 

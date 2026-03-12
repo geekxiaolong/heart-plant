@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { 
   ArrowLeft, Download, Sparkles, 
   Heart, Users, Baby, 
@@ -8,14 +8,16 @@ import {
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { apiUrl, buildApiHeaders } from '../utils/api';
+import { buildLoginRedirectState } from '../utils/authRedirect';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 
 export function AdoptionCeremony() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { plantId } = useParams();
   const { user, session, loading: authLoading } = useAuth();
   const { theme, themeConfig } = useEmotionalTheme();
@@ -62,22 +64,10 @@ export function AdoptionCeremony() {
     }
     setIsSending(true);
     try {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      const token = currentSession?.access_token;
-      
-      if (!token) {
-        toast.error('认证失败');
-        return;
-      }
-
+      const headers = await buildApiHeaders(true);
       const res = await fetch(apiUrl('/send-direct-invite'), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-User-JWT': token,
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers,
         body: JSON.stringify({
           plantId: plant.id,
           inviterId: user.id,
@@ -85,14 +75,15 @@ export function AdoptionCeremony() {
           targetEmail: targetEmail.trim().toLowerCase()
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         toast.success(`结缘契约已投递至 ${targetEmail}！ ✨`);
         setTargetEmail('');
       } else {
-        toast.error('发送失败，请确保该账号已注册');
+        toast.error(data.error || '发送失败，请确保该账号已注册');
       }
     } catch (e) {
+      console.error('send-direct-invite', e);
       toast.error('网络请求失败');
     } finally {
       setIsSending(false);
@@ -103,33 +94,26 @@ export function AdoptionCeremony() {
     if (!plant || !user) return;
     setIsGenerating(true);
     try {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      const token = currentSession?.access_token;
-
-      if (!token) {
-        toast.error('认证失败');
-        return;
-      }
-
+      const headers = await buildApiHeaders(true);
       const res = await fetch(apiUrl('/generate-invite'), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-User-JWT': token,
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey
-        },
+        headers,
         body: JSON.stringify({
           plantId: plant.id,
           inviterId: user.id,
           inviterName: user.user_metadata?.name || user.email?.split('@')[0] || '我'
         })
       });
-      const data = await res.json();
-      setInviteCode(data.code);
-      setShowPoster(true);
-      setTimeout(() => renderPoster(data.code), 100);
+      const data = await res.json().catch(() => ({}));
+      if (data.code) {
+        setInviteCode(data.code);
+        setShowPoster(true);
+        setTimeout(() => renderPoster(data.code), 100);
+      } else {
+        toast.error(data.error || '海报生成失败');
+      }
     } catch (e) {
+      console.error('generate-invite', e);
       toast.error('海报生成失败');
     } finally {
       setIsGenerating(false);
@@ -317,7 +301,10 @@ export function JoinInvitation() {
   const [isAccepting, setIsAccepting] = useState(false);
 
   const handleJoin = async () => {
-    if (!user) { navigate('/login', { state: { from: `/join/${inviteCode}` } }); return; }
+    if (!user) {
+      navigate('/login', { state: buildLoginRedirectState(location), replace: true });
+      return;
+    }
     setIsAccepting(true);
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -329,17 +316,13 @@ export function JoinInvitation() {
       }
 
       const userName = user.user_metadata?.name || user.email?.split('@')[0] || '守护者';
+      const headers = await buildApiHeaders(true);
       const res = await fetch(apiUrl('/accept-invite'), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          'X-User-JWT': token, 
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'apikey': publicAnonKey 
-        },
+        headers,
         body: JSON.stringify({ inviteCode: inviteCode?.toUpperCase(), userName })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         toast.success(`结缘成功！你已开启对 ${data.plant.name} 的守护`);
         setTimeout(() => navigate('/interaction'), 1500);
@@ -347,6 +330,7 @@ export function JoinInvitation() {
         toast.error(data.error || '该结缘码已失效，请联系发起人重新提供');
       }
     } catch (e) {
+      console.error('accept-invite', e);
       toast.error('网络连接异常或契约解析失败');
     } finally {
       setIsAccepting(false);

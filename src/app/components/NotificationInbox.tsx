@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Bell, Check, X, Sparkles, Loader2 } from 'lucide-react';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router';
 import { getCache, setCache } from '../utils/cache';

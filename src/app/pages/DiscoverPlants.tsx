@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Search, ChevronLeft, Filter, Sparkles, ArrowRight, Leaf, Heart, Smile, Users, Video } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { supabase } from '../utils/supabaseClient';
 import { getCache, setCache } from '../utils/cache';
 import { apiGet } from '../utils/api';
+import { ADOPTION_REFRESH_EVENT } from '../utils/adoptionRefresh';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 export function DiscoverPlants() {
@@ -40,6 +41,22 @@ export function DiscoverPlants() {
   ];
 
   useEffect(() => {
+    const syncMyPlantIds = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+
+        const userPlants = await apiGet<any[]>('/plants');
+        if (Array.isArray(userPlants)) {
+          const ids = userPlants.map((p: any) => p.originalId || p.id);
+          setMyPlantIds(ids);
+          setCache('my-plant-ids', ids);
+        }
+      } catch (e) {
+        console.error('Error syncing my plant ids:', e);
+      }
+    };
+
     const fetchLibrary = async () => {
       // 1. Try Cache First
       const cachedLibrary = getCache<any[]>('library', 300000); // 5 min
@@ -64,16 +81,7 @@ export function DiscoverPlants() {
           setCache('library', libraryData);
         }
 
-        const { data: { session } } = await supabase.auth.getSession();
-        // Fetch user's plants to mark already adopted ones
-        if (session?.access_token) {
-          const userPlants = await apiGet<any[]>('/plants');
-          if (Array.isArray(userPlants)) {
-            const ids = userPlants.map((p: any) => p.originalId || p.id);
-            setMyPlantIds(ids);
-            setCache('my-plant-ids', ids);
-          }
-        }
+        await syncMyPlantIds();
       } catch (e) {
         console.error('Error fetching library:', e);
         if (!cachedLibrary) setPlants([]);
@@ -83,16 +91,26 @@ export function DiscoverPlants() {
     };
     
     fetchLibrary();
+
+    if (typeof window === 'undefined') return;
+
+    const handleAdoptionRefresh = () => {
+      syncMyPlantIds();
+    };
+
+    window.addEventListener(ADOPTION_REFRESH_EVENT, handleAdoptionRefresh);
+    return () => window.removeEventListener(ADOPTION_REFRESH_EVENT, handleAdoptionRefresh);
   }, []);
 
   const filteredPlants = plants.filter(plant => {
-    const matchesSearch = plant.name.includes(searchTerm) || (plant.tags && plant.tags.some((tag: string) => tag.includes(searchTerm)));
-    const matchesDifficulty = selectedDifficulty === 'All' || plant.difficulty.toLowerCase() === selectedDifficulty.toLowerCase();
+    const difficulty = (plant.difficulty ?? '').toString().toLowerCase();
+    const matchesSearch = plant.name?.includes(searchTerm) || (plant.tags && plant.tags.some((tag: string) => tag.includes(searchTerm)));
+    const matchesDifficulty = selectedDifficulty === 'All' || difficulty === selectedDifficulty.toLowerCase();
     
     // Simple category mapping based on keywords/tags
     const matchesCategory = activeCategory === 'All' || 
       (activeCategory === 'Air' && (plant.tags?.includes('空气净化') || plant.description?.includes('空气'))) ||
-      (activeCategory === 'Easy' && plant.difficulty.toLowerCase() === 'easy') ||
+      (activeCategory === 'Easy' && difficulty === 'easy') ||
       (activeCategory === 'Healing' && (plant.mood?.includes('治愈') || plant.tags?.includes('治愈'))) ||
       (activeCategory === 'Social' && (plant.tags?.includes('垂吊') || plant.tags?.includes('多肉')));
 
@@ -199,12 +217,17 @@ export function DiscoverPlants() {
                           )}
                         </div>
                         <div className="absolute bottom-4 right-4">
-                          <div className={cn(
-                            "px-3 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/20 backdrop-blur-md text-white shadow-lg",
-                            p.difficulty.toLowerCase() === 'easy' ? "bg-green-500/80" : p.difficulty.toLowerCase() === 'medium' ? "bg-amber-500/80" : "bg-red-500/80"
-                          )}>
-                            {p.difficulty.toLowerCase() === 'easy' ? 'Lv.1 易上手' : p.difficulty.toLowerCase() === 'medium' ? 'Lv.2 进阶型' : 'Lv.3 大师级'}
-                          </div>
+                          {(() => {
+                            const d = (p.difficulty ?? '').toString().toLowerCase();
+                            return (
+                              <div className={cn(
+                                "px-3 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/20 backdrop-blur-md text-white shadow-lg",
+                                d === 'easy' ? "bg-green-500/80" : d === 'medium' ? "bg-amber-500/80" : "bg-red-500/80"
+                              )}>
+                                {d === 'easy' ? 'Lv.1 易上手' : d === 'medium' ? 'Lv.2 进阶型' : 'Lv.3 大师级'}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                       <div className="p-8">

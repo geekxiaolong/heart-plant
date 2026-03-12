@@ -7,14 +7,16 @@ import { EmotionalRadarChart } from '../components/EmotionalRadarChart';
 import { GoldenSentenceCard } from '../components/GoldenSentenceCard';
 import { WebRTCPlayer } from '../components/WebRTCPlayer';
 import { useEmotionalTheme, EmotionalTheme } from '../context/ThemeContext';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
 import { PlantAvatar } from '../components/PlantAvatar';
-import { ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
+import { findPlantByAnyId, getPrimaryPlantId, getPlantDisplayImage, getAvatarTypeForPlant, getDisplayVariety, getDisplayName, hasCartoonImage, normalizePlantIdentity } from '../utils/plantIdentity';
+import { invalidatePlantTimelineCaches, prependInteractionRecord, subscribeRecordCreated } from '../utils/recordRefresh';
+import { getStreamWhepUrl } from '../utils/streamUrl';
 
 // --- Sub-components for Optimization ---
 
@@ -95,6 +97,18 @@ export function Interaction() {
   const [loadingMoreTimeline, setLoadingMoreTimeline] = useState(false);
   
   const currentPlant = plants[activePlantIndex];
+  const currentPlantId = getPrimaryPlantId(currentPlant);
+
+  const navigateWithPlant = useCallback((target: 'profile' | 'mood' | 'journal' | 'ceremony') => {
+    if (!currentPlantId) return;
+    const pathMap = {
+      profile: `/plant-profile/${currentPlantId}`,
+      mood: `/mood/${currentPlantId}`,
+      journal: `/journal/${currentPlantId}`,
+      ceremony: `/ceremony/${currentPlantId}`,
+    };
+    navigate(pathMap[target], { state: { plantId: currentPlantId, originalId: currentPlant?.originalId } });
+  }, [currentPlant?.originalId, currentPlantId, navigate]);
 
   const [showTimeline, setShowTimeline] = useState(false);
   const [viewCamera, setViewCamera] = useState(false);
@@ -113,79 +127,20 @@ export function Interaction() {
   }, [currentPlant?.id]);
 
   const [hasNotifiedHighSync, setHasNotifiedHighSync] = useState(false);
-  const [healthTrendData, setHealthTrendData] = useState<{day: string, health: number, mood: number, isToday: boolean}[]>([]);
   const cameraTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const calculateBVI = useCallback(() => {
-    if (!currentPlant || !timelineEvents) return;
 
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const todayIndex = (new Date().getDay() + 6) % 7; // Convert to Mon-Sun
-    const result: {day: string, health: number, mood: number, isToday: boolean}[] = [];
-
-    // Base variables for the algorithm
-    const idealTemp = 24.0;
-    const idealHumid = 50.0;
-    
-    for (let i = 0; i <= 6; i++) {
-      const dayName = days[i];
-      const isPast = i < todayIndex;
-      const isToday = i === todayIndex;
-      
-      // 1. Environmental Stability Factor (ESF)
-      // Simulating historical fluctuation based on current IoT data with randomized entropy
-      const dayTemp = iotData.temp + (Math.sin(i * 0.8) * 2) + (Math.random() - 0.5);
-      const dayHumid = iotData.humidity + (Math.cos(i * 0.5) * 5) + (Math.random() * 2);
-      const tempDev = Math.abs(dayTemp - idealTemp);
-      const humidDev = Math.abs(dayHumid - idealHumid);
-      const esf = Math.max(0, 100 - (tempDev * 4 + humidDev * 1.5));
-
-      // 2. Interaction Frequency Factor (IFF)
-      // Weighting different activities: journal > mood > action
-      const dayEvents = timelineEvents.filter(e => {
-        const eventDate = new Date(e.date);
-        return eventDate.getDay() === (i + 1) % 7; // Map back to JS getDay
-      });
-      
-      const actionWeight = dayEvents.filter(e => e.type === 'activity').length * 5;
-      const moodWeight = dayEvents.filter(e => e.type === 'mood').length * 12;
-      const journalWeight = dayEvents.filter(e => e.type === 'journal').length * 25;
-      const iff = Math.min(100, (isPast ? (40 + actionWeight + moodWeight + journalWeight) : 0));
-
-      // 3. Resonance Synergy (RS)
-      // Today's sync rate acts as a momentum multiplier for the whole week's potential
-      const rs = (syncRate / 100) * 20;
-
-      // 4. Biological Decay & Momentum
-      // Health doesn't change instantly; it has "mass" (inertia)
-      const prevHealth = i > 0 ? result[i-1].health : 75;
-      
-      // FINAL CALCULATION: Weighted average + Entropy + Momentum
-      let rawHealth = (esf * 0.4 + iff * 0.4 + rs * 1.0);
-      
-      // If it's today, we use real current data
-      if (isToday) {
-        rawHealth = (currentPlant.health || 85) * 0.7 + (syncRate * 0.3);
-      } else if (!isPast) {
-        // Future prediction (projection)
-        rawHealth = prevHealth + (Math.random() * 4 - 2.5);
-      }
-
-      // Smoothing: 30% of previous state + 70% of current calculation
-      const finalHealth = Math.min(100, Math.max(20, (prevHealth * 0.3 + rawHealth * 0.7)));
-      
-      result.push({
-        day: dayName,
-        health: Math.round(finalHealth),
-        mood: Math.round(isPast || isToday ? Math.min(100, iff + rs + 20) : 0),
-        isToday
-      });
-    }
-    setHealthTrendData(result);
-  }, [currentPlant, timelineEvents, syncRate, iotData]);
-
-  useEffect(() => {
-    calculateBVI();
-  }, [calculateBVI]);
+  /** 健康指数算法：基础健康值(60%) + 环境适宜度(25%) + 共鸣加成(15%)，结果 0–100 */
+  const healthIndex = useMemo(() => {
+    const base = Math.min(100, Math.max(0, currentPlant?.health ?? 85));
+    const idealTemp = 24;
+    const idealHumid = 50;
+    const tempDev = Math.abs((iotData?.temp ?? 24) - idealTemp);
+    const humidDev = Math.abs((iotData?.humidity ?? 50) - idealHumid);
+    const envScore = Math.max(0, 100 - tempDev * 3 - humidDev * 0.8);
+    const resonanceBonus = (syncRate / 100) * 15;
+    const value = base * 0.6 + (envScore / 100) * 25 + resonanceBonus;
+    return Math.round(Math.min(100, Math.max(0, value)));
+  }, [currentPlant?.health, iotData?.temp, iotData?.humidity, syncRate]);
 
   // ✅ Complex Resonance Algorithm
   const updateResonance = useCallback((increment: number, type: 'action' | 'deep' | 'passive') => {
@@ -244,50 +199,21 @@ export function Interaction() {
     const cacheKey = `plants-${user?.id}`;
     const cached = getCache<any[]>(cacheKey, 60000); // 1 min
 
-    const initialPlantId = location.state?.plantId || localStorage.getItem('last_viewed_plant_id');
+    const initialPlantId = getPrimaryPlantId(location.state?.plantId || location.state?.originalId || localStorage.getItem('last_viewed_plant_id'));
 
     if (cached) {
-      // Ensure cached data has avatarType
-      const AVATAR_TYPES = ['succulent', 'cactus', 'pothos', 'sunflower', 'monstera', 'snakeplant'];
+      // 形象与品种统一由 plantIdentity.getAvatarTypeForPlant 绑定
       const processedCached = cached.map((plant: any) => {
-        if (plant.avatarType) return plant;
-        
-        let avatarType = 'succulent';
-        // Try to match based on plant name or species
-        const name = (plant.name || '').toLowerCase();
-        const species = (plant.species || '').toLowerCase();
-        const combined = name + ' ' + species;
-        
-        if (combined.includes('仙人') || combined.includes('cactus') || combined.includes('球')) {
-          avatarType = 'cactus';
-        } else if (combined.includes('向日葵') || combined.includes('sunflower') || combined.includes('菊')) {
-          avatarType = 'sunflower';
-        } else if (combined.includes('龟背竹') || combined.includes('monstera') || combined.includes('裂叶')) {
-          avatarType = 'monstera';
-        } else if (combined.includes('虎皮兰') || combined.includes('snake') || combined.includes('剑')) {
-          avatarType = 'snakeplant';
-        } else if (combined.includes('绿萝') || combined.includes('pothos') || combined.includes('蕨') || combined.includes('fern') || combined.includes('藤') || combined.includes('吊兰')) {
-          avatarType = 'pothos';
-        } else if (combined.includes('多肉') || combined.includes('succulent') || combined.includes('莲') || combined.includes('玉露')) {
-          avatarType = 'succulent';
-        } else {
-          // Fallback to deterministic hash if no keyword match
-          let hash = 0;
-          const str = plant.id || plant.name || 'default';
-          for (let i = 0; i < str.length; i++) {
-            hash = str.charCodeAt(i) + ((hash << 5) - hash);
-          }
-          avatarType = AVATAR_TYPES[Math.abs(hash) % AVATAR_TYPES.length];
-        }
-        
-        return { ...plant, avatarType };
+        const normalizedPlant = normalizePlantIdentity(plant);
+        const avatarType = getAvatarTypeForPlant(plant);
+        return { ...normalizedPlant, avatarType };
       });
 
       setPlants(processedCached);
       setLoading(false);
       
       if (!hasInitializedRef.current && initialPlantId && processedCached?.length) {
-        const index = processedCached.findIndex((p: any) => p.id === initialPlantId);
+        const index = processedCached.findIndex((p: any) => !!findPlantByAnyId([p], initialPlantId));
         if (index !== -1) {
           setActivePlantIndex(index);
         }
@@ -311,46 +237,18 @@ export function Interaction() {
       
       if (res.ok) {
         const data = await res.json();
-        // Assign deterministic avatar type based on ID
-        const AVATAR_TYPES = ['succulent', 'cactus', 'pothos', 'sunflower', 'monstera', 'snakeplant'];
+        // 形象与品种统一由 plantIdentity.getAvatarTypeForPlant 绑定
         const processedData = (data || []).map((plant: any) => {
-          let avatarType = 'succulent';
-          
-          // Try to match based on plant name or species
-          const name = (plant.name || '').toLowerCase();
-          const species = (plant.species || '').toLowerCase();
-          const combined = name + ' ' + species;
-          
-          if (combined.includes('仙人') || combined.includes('cactus') || combined.includes('球')) {
-            avatarType = 'cactus';
-          } else if (combined.includes('向日葵') || combined.includes('sunflower') || combined.includes('菊')) {
-            avatarType = 'sunflower';
-          } else if (combined.includes('龟背竹') || combined.includes('monstera') || combined.includes('裂叶')) {
-            avatarType = 'monstera';
-          } else if (combined.includes('虎皮兰') || combined.includes('snake') || combined.includes('剑')) {
-            avatarType = 'snakeplant';
-          } else if (combined.includes('绿萝') || combined.includes('pothos') || combined.includes('蕨') || combined.includes('fern') || combined.includes('藤') || combined.includes('吊兰')) {
-            avatarType = 'pothos';
-          } else if (combined.includes('多肉') || combined.includes('succulent') || combined.includes('莲') || combined.includes('玉露')) {
-            avatarType = 'succulent';
-          } else {
-            // Fallback to deterministic hash if no keyword match
-            let hash = 0;
-            const str = plant.id || plant.name || 'default';
-            for (let i = 0; i < str.length; i++) {
-              hash = str.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            avatarType = AVATAR_TYPES[Math.abs(hash) % AVATAR_TYPES.length];
-          }
-          
-          return { ...plant, avatarType };
+          const normalizedPlant = normalizePlantIdentity(plant);
+          const avatarType = getAvatarTypeForPlant(plant);
+          return { ...plant, ...normalizedPlant, avatarType };
         });
         
         setPlants(processedData);
         setCache(cacheKey, processedData);
         
         if (!hasInitializedRef.current && initialPlantId && processedData?.length) {
-          const index = processedData.findIndex((p: any) => p.id === initialPlantId);
+          const index = processedData.findIndex((p: any) => !!findPlantByAnyId([p], initialPlantId));
           if (index !== -1) {
             setActivePlantIndex(index);
           }
@@ -402,7 +300,7 @@ export function Interaction() {
   // ✅ Persist current plant choice
   useEffect(() => {
     if (currentPlant?.id) {
-      localStorage.setItem('last_viewed_plant_id', currentPlant.id);
+      localStorage.setItem('last_viewed_plant_id', currentPlantId);
     }
   }, [currentPlant?.id]);
 
@@ -483,7 +381,10 @@ export function Interaction() {
           }),
           content,
           icon,
-          color
+          color,
+          mood: e.mood,
+          title: e.title,
+          timestamp: e.timestamp,
         };
       });
 
@@ -515,6 +416,25 @@ export function Interaction() {
     setHasMoreTimeline(true);
     fetchTimeline();
   }, [fetchTimeline]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeRecordCreated((event) => {
+      const detail = event.detail;
+      if (!currentPlant?.id) return;
+      if (!findPlantByAnyId([currentPlant], detail.plantId || detail.originalId || detail.rawRecord)) return;
+
+      setTimelineEvents((prev) => prependInteractionRecord(prev, detail.interactionRecord, {
+        mood: Smile,
+        journal: PenTool,
+      }));
+      setTimelinePage(1);
+      invalidatePlantTimelineCaches(detail.plantId, detail.originalId);
+      fetchTimeline(1);
+      fetchPlants();
+    });
+
+    return unsubscribe;
+  }, [currentPlant, fetchPlants, fetchTimeline]);
 
   useEffect(() => {
     if (currentPlant?.type && currentPlant.type !== theme) {
@@ -688,7 +608,7 @@ export function Interaction() {
 
               <div className="grid grid-cols-1 gap-4">
                 <button 
-                  onClick={() => { setShowArchive(false); navigate(`/plant-profile/${currentPlant.id}`); }}
+                  onClick={() => { setShowArchive(false); navigateWithPlant('profile'); }}
                   className="w-full p-6 flex items-center gap-5 bg-gray-50 rounded-[32px] hover:bg-gray-100 transition-all active:scale-[0.98] group"
                 >
                   <div className="w-14 h-14 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-sm">
@@ -702,7 +622,7 @@ export function Interaction() {
                 </button>
 
                 <button 
-                  onClick={() => { updateResonance(6.5, 'deep'); setShowArchive(false); navigate(`/mood/${currentPlant.id}`); }}
+                  onClick={() => { updateResonance(6.5, 'deep'); setShowArchive(false); navigateWithPlant('mood'); }}
                   className="w-full p-6 flex items-center gap-5 bg-gray-50 rounded-[32px] hover:bg-gray-100 transition-all active:scale-[0.98] group"
                 >
                   <div className={cn(
@@ -719,7 +639,7 @@ export function Interaction() {
                 </button>
 
                 <button 
-                  onClick={() => { updateResonance(15.0, 'deep'); setShowArchive(false); navigate(`/journal/${currentPlant.id}`); }}
+                  onClick={() => { updateResonance(15.0, 'deep'); setShowArchive(false); navigateWithPlant('journal'); }}
                   className="w-full p-6 flex items-center gap-5 bg-gray-50 rounded-[32px] hover:bg-gray-100 transition-all active:scale-[0.98] group"
                 >
                   <div className={cn(
@@ -799,9 +719,9 @@ export function Interaction() {
         </div>
         <div className="flex flex-col items-center">
           <h2 className="text-sm font-black tracking-widest uppercase opacity-40">正在互动</h2>
-          <div className="flex items-center gap-2">
-             <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: themeConfig.primary }} />
-             <span className="font-bold text-lg">{currentPlant.name}</span>
+          <div className="flex flex-col items-center gap-0.5">
+             <span className="font-bold text-lg">{getDisplayName(currentPlant)}</span>
+             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">品种 · {getDisplayVariety(currentPlant)}</span>
           </div>
         </div>
         <button onClick={nextPlant} className="p-2 text-gray-400 active:scale-90 transition-transform hover:text-black">
@@ -819,22 +739,79 @@ export function Interaction() {
             transition={{ duration: 0.6 }}
             className="w-full h-full flex items-center justify-center relative"
           >
-            {/* Background Atmosphere */}
+            {/* Background Atmosphere：认领后优先用 fal 生成的卡通图 */}
             <div className={cn("absolute inset-0 transition-opacity duration-1000", viewCamera ? "opacity-100" : "opacity-0")}>
-               <img src={currentPlant.image} className="w-full h-full object-cover blur-md brightness-50" alt="" />
+               <img src={getPlantDisplayImage(currentPlant)} className="w-full h-full object-cover blur-md brightness-50" alt="" />
             </div>
 
-            <PlantAvatar 
-              size={320} 
-              theme={theme} 
-              type={currentPlant.avatarType}
-              health={currentPlant.health} 
-              humidity={iotData.humidity} 
-              temp={iotData.temp}
-              isWatering={isWatering}
-              isFertilizing={isFertilizing}
-              className={cn("transition-transform duration-500", viewCamera && "scale-110 opacity-20")}
-            />
+            {hasCartoonImage(currentPlant) ? (
+              <div className={cn("relative flex items-center justify-center w-80 h-80", viewCamera && "scale-110 opacity-20")}>
+                {/* 浇水/施肥光晕 */}
+                <Motion.div
+                  animate={{
+                    scale: isFertilizing ? [1, 1.4, 1] : [1, 1.1, 1],
+                    opacity: isFertilizing ? [0.6, 0.9, 0.6] : [0.3, 0.6, 0.3],
+                    backgroundColor: isFertilizing ? '#F59E0B' : (isWatering ? '#3B82F6' : 'transparent'),
+                  }}
+                  transition={{ duration: isFertilizing || isWatering ? 1 : 4, repeat: Infinity }}
+                  className="absolute inset-0 rounded-full blur-[40px] transition-colors duration-500"
+                />
+                <Motion.img
+                  src={getPlantDisplayImage(currentPlant)}
+                  alt={currentPlant.name}
+                  referrerPolicy="no-referrer"
+                  className="relative z-10 w-80 h-80 object-contain drop-shadow-2xl"
+                  animate={isWatering ? { scale: [1, 1.05, 1], y: [0, -5, 0] } : (isFertilizing ? { scale: [1, 1.1, 1] } : {})}
+                  transition={{ duration: 0.5, repeat: isWatering || isFertilizing ? Infinity : 0 }}
+                />
+                {/* 浇水水滴 */}
+                {isWatering && (
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-full z-20">
+                    {[...Array(8)].map((_, i) => (
+                      <Motion.div
+                        key={i}
+                        initial={{ y: -50, x: 50 + Math.random() * 220, opacity: 0 }}
+                        animate={{ y: 320, opacity: [0, 1, 1, 0] }}
+                        transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.1, ease: 'linear' }}
+                        className="absolute text-blue-400 text-lg"
+                      >
+                        💧
+                      </Motion.div>
+                    ))}
+                  </div>
+                )}
+                {/* 施肥闪光 */}
+                {isFertilizing && (
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-full z-20">
+                    {[
+                      { x: 80, y: 60 }, { x: 240, y: 80 }, { x: 60, y: 120 },
+                      { x: 260, y: 100 }, { x: 160, y: 40 }, { x: 100, y: 180 },
+                    ].map((pos, i) => (
+                      <Motion.div
+                        key={i}
+                        className="absolute w-2 h-2 rounded-full bg-amber-300 shadow-lg"
+                        style={{ left: pos.x, top: pos.y }}
+                        initial={{ opacity: 1, scale: 1 }}
+                        animate={{ opacity: [1, 0.6, 0], scale: [1, 1.2, 0] }}
+                        transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.15, ease: 'easeOut' }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <PlantAvatar 
+                size={320} 
+                theme={theme} 
+                type={currentPlant.avatarType}
+                health={currentPlant.health} 
+                humidity={iotData.humidity} 
+                temp={iotData.temp}
+                isWatering={isWatering}
+                isFertilizing={isFertilizing}
+                className={cn("transition-transform duration-500", viewCamera && "scale-110 opacity-20")}
+              />
+            )}
           </Motion.div>
         </AnimatePresence>
         
@@ -877,33 +854,35 @@ export function Interaction() {
           </button>
         </div>
 
-        {/* Smart Pot Console - Bottom HUD */}
+        {/* Smart Pot Console - Bottom HUD（拉流窗口打开时不显示温湿度） */}
         <div className="absolute bottom-14 inset-x-6 z-20">
           <div className="bg-black/40 backdrop-blur-xl rounded-[32px] p-3 pl-5 border border-white/10 shadow-2xl flex items-center justify-between">
-            <div className="flex gap-6">
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1 text-white/40 mb-0.5">
-                  <Thermometer size={10} />
-                  <span className="text-[7px] font-black uppercase tracking-tighter">TEMP</span>
+            {!viewCamera && (
+              <div className="flex gap-6">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1 text-white/40 mb-0.5">
+                    <Thermometer size={10} />
+                    <span className="text-[7px] font-black uppercase tracking-tighter">TEMP</span>
+                  </div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-white text-sm font-black">{iotData.temp}</span>
+                    <span className="text-white/30 text-[8px] font-bold">°</span>
+                  </div>
                 </div>
-                <div className="flex items-baseline gap-0.5">
-                  <span className="text-white text-sm font-black">{iotData.temp}</span>
-                  <span className="text-white/30 text-[8px] font-bold">°</span>
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1 text-white/40 mb-0.5">
+                    <Droplets size={10} />
+                    <span className="text-[7px] font-black uppercase tracking-tighter">HUMID</span>
+                  </div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-white text-sm font-black">{iotData.humidity}</span>
+                    <span className="text-white/30 text-[8px] font-bold">%</span>
+                  </div>
                 </div>
               </div>
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1 text-white/40 mb-0.5">
-                  <Droplets size={10} />
-                  <span className="text-[7px] font-black uppercase tracking-tighter">HUMID</span>
-                </div>
-                <div className="flex items-baseline gap-0.5">
-                  <span className="text-white text-sm font-black">{iotData.humidity}</span>
-                  <span className="text-white/30 text-[8px] font-bold">%</span>
-                </div>
-              </div>
-            </div>
+            )}
 
-            <div className="flex gap-2">
+            <div className={cn("flex gap-2", viewCamera && "ml-0")}>
                <Motion.button
                  whileTap={{ scale: 0.9 }}
                  onClick={() => handleAction('water')}
@@ -961,8 +940,8 @@ export function Interaction() {
              </button>
 
              <WebRTCPlayer 
-               streamUrl={`http://192.168.92.162:8889/${currentPlant?.streamPath || 'heartplant'}/whep`}
-               rtspUrl={currentPlant?.streamUrl || "rtsp://admin:reolink123@192.168.92.202:554"}
+               streamUrl={getStreamWhepUrl(currentPlant?.streamPath)}
+               rtspUrl={currentPlant?.streamUrl || (import.meta.env.VITE_DEFAULT_RTSP_URL || '')}
                onError={handleWebRTCError}
                onConnected={handleWebRTCConnected}
                enableDebug={false}
@@ -976,19 +955,6 @@ export function Interaction() {
                   <div className="text-white/30 text-[6px] font-mono uppercase tracking-tighter flex items-center gap-1">
                     <Wifi size={6} /> 4K WHEP
                   </div>
-                </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {[
-                    { icon: Thermometer, value: iotData.temp, unit: '°', label: 'T' },
-                    { icon: Droplets, value: iotData.humidity, unit: '%', label: 'H' },
-                    { icon: Sparkles, value: currentPlant.health || 95, unit: '%', label: 'L' },
-                    { icon: Activity, value: 'OK', unit: '', label: 'S' },
-                  ].map((s, i) => (
-                    <div key={i} className="bg-white/5 bg-blur-md rounded-lg p-1 flex flex-col items-center gap-0 border border-white/5">
-                      <s.icon size={6} className="text-white/20" />
-                      <span className="text-[7px] font-black text-white/80 leading-tight">{s.value}{s.unit}</span>
-                    </div>
-                  ))}
                 </div>
               </div>
           </div>
@@ -1010,7 +976,7 @@ export function Interaction() {
                     </div>
                   ))}
                   <button 
-                    onClick={() => navigate(`/ceremony/${currentPlant.id}`)}
+                    onClick={() => navigateWithPlant('ceremony')}
                     className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center shadow-sm active:scale-90 transition-all cursor-pointer"
                   >
                     <Plus size={10} />
@@ -1025,21 +991,21 @@ export function Interaction() {
                   label: '植物档案', 
                   icon: BookOpen, 
                   color: 'bg-blue-50 text-blue-500', 
-                  path: `/plant-profile/${currentPlant.id}` 
+                  path: currentPlantId ? `/plant-profile/${currentPlantId}` : '/interaction' 
                 },
                 { 
                   id: 'mood', 
                   label: theme === 'solo' ? '生理快照' : '心情打卡', 
                   icon: theme === 'solo' ? Activity : Smile, 
                   color: theme === 'solo' ? 'bg-slate-50 text-slate-500' : 'bg-orange-50 text-orange-500', 
-                  path: `/mood/${currentPlant.id}` 
+                  path: currentPlantId ? `/mood/${currentPlantId}` : '/interaction' 
                 },
                 { 
                   id: 'journal', 
                   label: theme === 'solo' ? '生长手记' : '亲密日记', 
                   icon: theme === 'solo' ? Notebook : PenTool, 
                   color: theme === 'solo' ? 'bg-teal-50 text-teal-600' : 'bg-purple-50 text-purple-500', 
-                  path: `/journal/${currentPlant.id}` 
+                  path: currentPlantId ? `/journal/${currentPlantId}` : '/interaction' 
                 },
               ].map((item) => (
                 <button
@@ -1068,32 +1034,29 @@ export function Interaction() {
               </div>
            </div>
 
-           {/* Stats Summary Grid */}
+           {/* 健康指数 & 情感共鸣度（仅保留数据，无趋势图） */}
            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white/80 backdrop-blur-md p-4 rounded-[28px] border border-white/40 shadow-sm flex flex-col gap-1">
-                 <span className="text-[8px] font-black text-gray-400 uppercase">本周健康趋势</span>
-                 <div className="flex items-end gap-1">
-                    <span className="text-2xl font-black text-gray-800">92%</span>
-                    <div className="flex items-center text-[10px] font-black text-green-500 mb-1">
-                       <Plus size={10} /> 4.2%
-                    </div>
-                 </div>
-                 <div className="w-full h-1 bg-gray-100 rounded-full mt-2 overflow-hidden">
-                    <div className="h-full bg-green-500 rounded-full" style={{ width: '92%' }} />
-                 </div>
-              </div>
-               <div className="bg-white/80 backdrop-blur-md p-4 rounded-[28px] border border-white/40 shadow-sm flex flex-col gap-1">
-                 <span className="text-[8px] font-black text-gray-400 uppercase">情感共鸣度</span>
-                 <div className="flex items-end gap-1">
-                    <span className="text-2xl font-black text-gray-800">{(syncRate / 10).toFixed(1)}</span>
-                    <span className="text-[10px] font-black text-gray-400 mb-1">/10</span>
-                 </div>
-                 <div className="flex gap-1 mt-2">
-                    {[...Array(10)].map((_, i) => (
-                      <div key={i} className={cn("flex-1 h-1 rounded-full transition-colors duration-500", i < (syncRate / 10) ? "bg-blue-500" : "bg-gray-100")} />
-                    ))}
-                 </div>
-              </div>
+             <div className="bg-white/80 backdrop-blur-md p-4 rounded-[28px] border border-white/40 shadow-sm flex flex-col gap-1">
+               <span className="text-[8px] font-black text-gray-400 uppercase">健康指数</span>
+               <div className="flex items-end gap-1">
+                 <span className="text-2xl font-black text-gray-800">{healthIndex}%</span>
+               </div>
+               <div className="w-full h-1 bg-gray-100 rounded-full mt-2 overflow-hidden">
+                 <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${healthIndex}%` }} />
+               </div>
+             </div>
+             <div className="bg-white/80 backdrop-blur-md p-4 rounded-[28px] border border-white/40 shadow-sm flex flex-col gap-1">
+               <span className="text-[8px] font-black text-gray-400 uppercase">情感共鸣度</span>
+               <div className="flex items-end gap-1">
+                 <span className="text-2xl font-black text-gray-800">{(syncRate / 10).toFixed(1)}</span>
+                 <span className="text-[10px] font-black text-gray-400 mb-1">/10</span>
+               </div>
+               <div className="flex gap-1 mt-2">
+                 {[...Array(10)].map((_, i) => (
+                   <div key={i} className={cn("flex-1 h-1 rounded-full transition-colors duration-500", i < (syncRate / 10) ? "bg-blue-500" : "bg-gray-100")} />
+                 ))}
+               </div>
+             </div>
            </div>
 
            {/* Bio-Resonance Field Module */}
@@ -1207,84 +1170,6 @@ export function Interaction() {
               </div>
            </div>
 
-           {/* Interactive Trend Chart */}
-           <div className="bg-white p-6 rounded-[36px] shadow-xl shadow-black/5 border border-black/5 flex flex-col gap-4">
-              <div className="flex items-center justify-between mb-2">
-                 <div className="flex gap-4">
-                    <div className="flex items-center gap-2">
-                       <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: themeConfig.primary }} />
-                       <span className="text-[10px] font-black text-gray-500 uppercase">健康</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                       <span className="text-[10px] font-black text-gray-500 uppercase">共鸣</span>
-                    </div>
-                 </div>
-                 <select className="bg-gray-50 border-none text-[10px] font-black px-3 py-1.5 rounded-xl outline-none text-gray-500">
-                    <option>最近 7 天</option>
-                    <option>最近 30 天</option>
-                 </select>
-              </div>
-
-              <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                   <AreaChart data={healthTrendData}>
-                      <defs>
-                        <linearGradient id="colorHealth" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={themeConfig.primary} stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor={themeConfig.primary} stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorMood" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <Tooltip 
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            return (
-                              <div className="bg-black/90 backdrop-blur-xl p-3 rounded-2xl border border-white/10 shadow-2xl">
-                                <p className="text-white/40 text-[8px] font-black uppercase mb-1">
-                                  {payload[0].payload.day} {payload[0].payload.isToday && '(今天)'}
-                                </p>
-                                <div className="flex flex-col gap-1">
-                                  {payload.map((p, i) => (
-                                    <div key={i} className="flex items-center justify-between gap-4">
-                                      <span className="text-[10px] font-bold text-white/60">{p.name}</span>
-                                      <span className="text-xs font-black text-white">{p.value}%</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="health" 
-                        stroke={themeConfig.primary} 
-                        strokeWidth={4} 
-                        fillOpacity={1} 
-                        fill="url(#colorHealth)" 
-                        name="健康指数" 
-                        animationDuration={2000}
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="mood" 
-                        stroke="#3B82F6" 
-                        strokeWidth={4} 
-                        fillOpacity={1} 
-                        fill="url(#colorMood)" 
-                        name="共鸣感" 
-                        animationDuration={2000}
-                      />
-                   </AreaChart>
-                </ResponsiveContainer>
-              </div>
-           </div>
         </div>
 
         <div className="flex flex-col gap-4">

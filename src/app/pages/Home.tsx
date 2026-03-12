@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Heart, User, Droplets, Zap, Thermometer, MessageSquare, Plus, Bell, Sparkles, TrendingUp, Calendar, ChevronRight, Users, Smile, Baby, Sprout, Notebook } from 'lucide-react';
-import { useNavigate, NavLink } from 'react-router';
-import { motion, AnimatePresence } from 'motion/react';
+import { Heart, User, Thermometer, MessageSquare, Plus, Bell, Sparkles, TrendingUp, Calendar, ChevronRight, Users, Smile, Baby, Sprout, Notebook } from 'lucide-react';
+import { useNavigate, NavLink, useLocation } from 'react-router';
+import { motion, AnimatePresence } from 'framer-motion';
 import { PlantAvatar } from '../components/PlantAvatar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { useEmotionalTheme, EmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { toast } from 'sonner';
-import { apiGet, apiPost } from '../utils/api';
+import { apiGet } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
+import { ADOPTION_REFRESH_EVENT } from '../utils/adoptionRefresh';
+import { getPrimaryPlantId, getPlantDisplayImage, getAvatarTypeForPlant, hasCartoonImage } from '../utils/plantIdentity';
 
 export function Home() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, session, loading: authLoading } = useAuth();
   const { setTheme, themeConfig, theme } = useEmotionalTheme();
   const [plants, setPlants] = useState<any[]>(() => {
@@ -31,7 +34,6 @@ export function Home() {
     return [];
   });
   const [isLoading, setIsLoading] = useState(!plants.length);
-  const [isActing, setIsActing] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
   const fetchNotificationsCount = async () => {
@@ -52,107 +54,94 @@ export function Home() {
     return () => clearInterval(interval);
   }, [user?.email]);
 
-  const handleQuickAction = async (plantId: string, type: 'water' | 'fertilize') => {
-    const plant = plants.find(p => p.id === plantId);
-    if (!plant) return;
 
-    const actionType = type === 'water' ? 'watering' : 'fertilizing';
-    const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || '我';
-    
-    setIsActing(`${plantId}-${type}`);
-    
-    if (type === 'water') {
-      toast.success(`已为 ${plant.name} 补充爱心水滴 💧`);
-    } else {
-      toast.success(`已为 ${plant.name} 施加金色养料 🌟`);
+  const fetchAvailable = async () => {
+    // Background refresh even if we have cache
+    try {
+      const data = await apiGet<any[]>('/library');
+      if (data && Array.isArray(data)) {
+        setCache('library', data);
+        setAvailableToAdopt(data.filter((p: any) => p.status === 'active' || !p.status).slice(0, 4));
+      }
+    } catch (e) {
+      console.error('Error fetching library:', e);
+    }
+  };
+
+  const fetchPlants = async (options?: { silent?: boolean; force?: boolean }) => {
+    const cacheKey = `plants-current`;
+    const cachedPlants = !options?.force ? getCache<any[]>(cacheKey, 60000) : null;
+
+    if (cachedPlants && !plants.length) {
+      setPlants(cachedPlants);
+      setIsLoading(false);
     }
 
     try {
-      await apiPost('/log-activity', {
-        plantId: plant.id,
-        type: actionType,
-        userId: user?.id || 'anonymous',
-        userName: userName,
-        details: type === 'water' ? '首页快速浇水' : '首页快速施肥'
-      });
+      if (!session?.access_token) {
+        setPlants([]);
+        setIsLoading(false);
+        return;
+      }
 
-      // Update local state
-      setPlants(prev => {
-        const next = prev.map(p => {
-          if (p.id === plantId) {
-            return { ...p, health: Math.min(100, p.health + (type === 'water' ? 2 : 5)) };
-          }
-          return p;
-        });
-        setCache(`plants-${user?.id}`, next);
-        return next;
-      });
-    } catch (e) {
-      console.error('Error logging quick action:', e);
-      toast.error('操作失败，请重试');
+      const data = await apiGet<any[]>('/plants');
+      
+      if (data && Array.isArray(data)) {
+        setPlants(data);
+        setCache(cacheKey, data);
+        if (user?.id) setCache(`plants-${user.id}`, data);
+      } else {
+        setPlants([]);
+      }
+    } catch (e: any) {
+      console.error('Error fetching plants:', e);
+      if (!options?.silent && !plants.length) {
+        toast.error('获取植物数据失败：' + e.message);
+        setPlants([]);
+      }
     } finally {
-      setIsActing(null);
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    const fetchAvailable = async () => {
-      // Background refresh even if we have cache
-      try {
-        const data = await apiGet<any[]>('/library');
-        if (data && Array.isArray(data)) {
-          setCache('library', data);
-          setAvailableToAdopt(data.filter((p: any) => p.status === 'active' || !p.status).slice(0, 4));
-        }
-      } catch (e) {
-        console.error('Error fetching library:', e);
-      }
-    };
-    
     fetchAvailable();
   }, []);
 
   useEffect(() => {
     if (authLoading) return;
-
-    const fetchPlants = async () => {
-      const cacheKey = `plants-current`; // Use a stable key or user.id
-      const cachedPlants = getCache<any[]>(cacheKey, 60000); // 1 min
-
-      if (cachedPlants && !plants.length) {
-        setPlants(cachedPlants);
-        setIsLoading(false);
-      }
-
-      try {
-        if (!session?.access_token) {
-          setPlants([]);
-          setIsLoading(false);
-          return;
-        }
-
-        const data = await apiGet<any[]>('/plants');
-        
-        if (data && Array.isArray(data)) {
-          setPlants(data);
-          setCache(cacheKey, data);
-          // Also set user-specific cache for detail pages
-          if (user?.id) setCache(`plants-${user.id}`, data);
-        } else {
-          setPlants([]);
-        }
-      } catch (e: any) {
-        console.error('Error fetching plants:', e);
-        if (!plants.length) {
-          toast.error('获取植物数据失败：' + e.message);
-          setPlants([]);
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchPlants();
   }, [session, authLoading, user?.id]);
+
+  useEffect(() => {
+    if (!session?.access_token || !location.state?.refreshMyPlants) return;
+    fetchPlants({ force: true, silent: true });
+    fetchAvailable();
+  }, [location.state, session?.access_token]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleAdoptionRefresh = () => {
+      fetchPlants({ force: true, silent: true });
+      fetchAvailable();
+    };
+
+    window.addEventListener(ADOPTION_REFRESH_EVENT, handleAdoptionRefresh);
+    return () => window.removeEventListener(ADOPTION_REFRESH_EVENT, handleAdoptionRefresh);
+  }, [session?.access_token, user?.id]);
+
+  const goToPlant = (plant: any, target: 'interaction' | 'mood' | 'journal') => {
+    const canonicalId = getPrimaryPlantId(plant);
+    if (!canonicalId) return;
+
+    if (target === 'interaction') {
+      navigate('/interaction', { state: { plantId: canonicalId, originalId: plant?.originalId } });
+      return;
+    }
+
+    navigate(`/${target}/${canonicalId}`, { state: { plantId: canonicalId, originalId: plant?.originalId } });
+  };
 
   const filteredPlants = useMemo(() => {
     let result = [...plants];
@@ -286,31 +275,36 @@ export function Home() {
                   filteredPlants.length === 1 ? "col-span-2 flex flex-row items-stretch h-[220px]" : "flex flex-col"
                 )}
               >
-                {/* Compact Image Area */}
+                {/* Compact Image Area：认领后优先展示 fal 生成的卡通形象 */}
                 <div className={cn(
                   "relative bg-gray-50 flex items-center justify-center overflow-hidden shrink-0 transition-all",
                   filteredPlants.length === 1 ? "w-[45%] h-full" : "h-40 w-full"
                 )}>
-                  <NavLink to="/interaction" state={{ plantId: plant.id }} className="absolute inset-0 z-10">
-                    <img src={plant.image} className="w-full h-full object-cover opacity-10 blur-sm" alt="" />
-                  </NavLink>
+                  <button type="button" onClick={() => goToPlant(plant, 'interaction')} className="absolute inset-0 z-10" aria-label={`查看 ${plant.name} 互动详情`}>
+                    <img src={getPlantDisplayImage(plant)} className="w-full h-full object-cover opacity-10 blur-sm" alt="" />
+                  </button>
                   <div className={cn(
-                    "relative z-20 pointer-events-none transition-transform",
+                    "relative z-20 pointer-events-none transition-transform flex items-center justify-center",
                     filteredPlants.length === 1 ? "scale-90" : "scale-75"
                   )}>
-                    <PlantAvatar 
-                      size={filteredPlants.length === 1 ? 160 : 140} 
-                      theme={plant.type} 
-                      health={plant.health} 
-                      humidity={plant.humidity} 
-                      temp={plant.temp} 
-                    />
+                    {hasCartoonImage(plant) ? (
+                      <img src={getPlantDisplayImage(plant)} alt={plant.name} referrerPolicy="no-referrer" className={cn("object-contain", filteredPlants.length === 1 ? "w-40 h-40" : "w-36 h-36")} />
+                    ) : (
+                      <PlantAvatar 
+                        size={filteredPlants.length === 1 ? 160 : 140} 
+                        theme={plant.type} 
+                        type={getAvatarTypeForPlant(plant)}
+                        health={plant.health} 
+                        humidity={plant.humidity} 
+                        temp={plant.temp} 
+                      />
+                    )}
                   </div>
                   
                   {/* Floating Status Badges */}
                   <div className="absolute top-4 left-4 z-20 flex flex-col gap-1">
                     <span className="px-2 py-0.5 rounded-lg bg-black/40 backdrop-blur-md text-white text-[7px] font-black uppercase tracking-widest border border-white/10">
-                      {plant.tag || plant.type}
+                      {plant.name || plant.species || plant.tag || plant.type}
                     </span>
                     {plant.health < 30 && (
                       <span className="px-2 py-0.5 rounded-lg bg-rose-500 text-white text-[7px] font-black uppercase tracking-widest animate-pulse">
@@ -319,31 +313,6 @@ export function Home() {
                     )}
                   </div>
 
-                  {/* Quick Actions - Hover Style */}
-                  <div className="absolute inset-0 z-30 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/5 backdrop-blur-[2px]">
-                    <motion.button 
-                      whileTap={{ scale: 0.9 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleQuickAction(plant.id, 'water');
-                      }}
-                      disabled={isActing === `${plant.id}-water`}
-                      className="w-10 h-10 rounded-xl bg-white shadow-xl flex items-center justify-center text-blue-500 active:scale-90 transition-all"
-                    >
-                      <Droplets size={18} />
-                    </motion.button>
-                    <motion.button 
-                      whileTap={{ scale: 0.9 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleQuickAction(plant.id, 'fertilize');
-                      }}
-                      disabled={isActing === `${plant.id}-fertilize`}
-                      className="w-10 h-10 rounded-xl bg-white shadow-xl flex items-center justify-center text-amber-500 active:scale-90 transition-all"
-                    >
-                      <Zap size={18} />
-                    </motion.button>
-                  </div>
                 </div>
 
                 {/* Compact Info Area */}
@@ -351,7 +320,7 @@ export function Home() {
                   "p-4 flex flex-col flex-1",
                   filteredPlants.length === 1 ? "p-6 justify-center" : "gap-3"
                 )}>
-                  <NavLink to="/interaction" state={{ plantId: plant.id }} className="flex flex-col">
+                  <button type="button" onClick={() => goToPlant(plant, 'interaction')} className="flex flex-col text-left">
                     <div className="flex justify-between items-start">
                       <h4 className={cn("font-black tracking-tight line-clamp-1 flex-1", filteredPlants.length === 1 ? "text-xl" : "text-sm")}>{plant.name}</h4>
                       <span className={cn(
@@ -396,7 +365,7 @@ export function Home() {
                         <div className="h-5" /> 
                       )}
                     </div>
-                  </NavLink>
+                  </button>
 
                   <div className={cn(
                     "flex gap-2 border-t border-black/5 pt-3",
@@ -405,7 +374,7 @@ export function Home() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/mood/${plant.id}`);
+                        goToPlant(plant, 'mood');
                       }}
                       className="flex-1 py-3 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-orange-50 hover:text-orange-500 transition-colors"
                     >
@@ -414,7 +383,7 @@ export function Home() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/journal/${plant.id}`);
+                        goToPlant(plant, 'journal');
                       }}
                       className="flex-1 py-3 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-blue-50 hover:text-blue-500 transition-colors"
                     >

@@ -6,7 +6,7 @@ import { useEmotionalTheme } from '../context/ThemeContext';
 import { apiUrl, buildApiHeaders, getStoragePublicUrl } from '../utils/api';
 import { getFollowingListCacheKey, normalizeFollowingListResponse, subscribeFollowingUpdates, syncFollowingCache, type NormalizedFollowingUser } from '../utils/follow';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { setCache } from '../utils/cache';
 import { getPublicProfilePath } from '../utils/profile';

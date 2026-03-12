@@ -4,7 +4,7 @@ import {
   ChevronRight, Crown, Zap, Target, CircleCheckBig,
   ChevronLeft
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router';

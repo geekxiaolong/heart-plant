@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   X
 } from 'lucide-react';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router';
 import { getCache, setCache } from '../utils/cache';
 import { apiGet } from '../utils/api';

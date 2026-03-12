@@ -6,15 +6,18 @@ import {
   ChevronRight, Filter, History, Loader2, Image as ImageIcon
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 import { EmotionalRadarChart } from '../components/EmotionalRadarChart';
 import { GoldenSentenceCard } from '../components/GoldenSentenceCard';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import { cn } from '../utils/cn';
+import { findPlantByAnyId, getPrimaryPlantId, getDisplayVariety, getDisplayName } from '../utils/plantIdentity';
+import { prependPlantTimelineRecord, subscribeRecordCreated } from '../utils/recordRefresh';
 
 export default function PlantProfileDetail() {
   const { plantId } = useParams();
+  const resolvedPlantId = getPrimaryPlantId(plantId);
   const navigate = useNavigate();
   const { theme, themeConfig } = useEmotionalTheme();
   const [plant, setPlant] = useState<any>(null);
@@ -35,7 +38,7 @@ export default function PlantProfileDetail() {
       
       if (res.ok) {
         const data = await res.json();
-        const found = data.find((p: any) => p.id === plantId);
+        const found = findPlantByAnyId(data, resolvedPlantId || plantId);
         if (found) setPlant(found);
       }
     } catch (e) {
@@ -43,13 +46,13 @@ export default function PlantProfileDetail() {
     } finally {
       setLoading(false);
     }
-  }, [plantId]);
+  }, [plantId, resolvedPlantId]);
 
   const fetchTimeline = useCallback(async (pageNum: number, isNewFilter = false) => {
-    if (!plantId) return;
+    if (!resolvedPlantId && !plantId) return;
     setTimelineLoading(true);
     try {
-      const res = await fetch(apiUrl(`/plant-timeline/${plantId}?page=${pageNum}&limit=10`), {
+      const res = await fetch(apiUrl(`/plant-timeline/${resolvedPlantId || plantId}?page=${pageNum}&limit=10`), {
         headers: await buildApiHeaders()
       });
       
@@ -68,18 +71,46 @@ export default function PlantProfileDetail() {
     } finally {
       setTimelineLoading(false);
     }
-  }, [plantId]);
+  }, [plantId, resolvedPlantId]);
 
   useEffect(() => {
     fetchPlant();
     fetchTimeline(1);
   }, [fetchPlant, fetchTimeline]);
 
+  useEffect(() => {
+    const unsubscribe = subscribeRecordCreated((event) => {
+      const detail = event.detail;
+      if (!findPlantByAnyId([{ id: resolvedPlantId || plantId, originalId: resolvedPlantId || plantId }], detail.plantId || detail.originalId || detail.rawRecord)) {
+        return;
+      }
+
+      setTimeline((prev) => prependPlantTimelineRecord(prev, detail.rawRecord, resolvedPlantId || plantId));
+      fetchPlant();
+      fetchTimeline(1, true);
+    });
+
+    return unsubscribe;
+  }, [fetchPlant, fetchTimeline, plantId, resolvedPlantId]);
+
   const loadMore = () => {
     if (!timelineLoading && hasMore) {
       fetchTimeline(page + 1);
     }
   };
+
+  /** 守护天数：优先用接口的 days，否则从认领/创建日期起算到今日 */
+  const guardianDays = (() => {
+    if (plant?.days != null && Number.isFinite(Number(plant.days))) return Math.max(0, Math.floor(Number(plant.days)));
+    const raw = plant?.adoptedAt ?? plant?.created_at ?? plant?.createdAt ?? plant?.plantingDate ?? plant?.addedDate;
+    if (!raw) return 0;
+    const start = new Date(raw);
+    if (Number.isNaN(start.getTime())) return 0;
+    const today = new Date();
+    start.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.floor((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)));
+  })();
 
   const getMoodIcon = (mood?: string) => {
     switch (mood) {
@@ -143,19 +174,28 @@ export default function PlantProfileDetail() {
             <img src={plant.image} className="w-full h-full object-cover" alt={plant.name} />
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-8">
               <div className="flex flex-col gap-2">
+                <span className="text-white/80 text-xs font-bold uppercase tracking-widest">品种 · {getDisplayVariety(plant)}</span>
                 <span className="bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white text-[10px] font-black w-fit uppercase tracking-widest border border-white/20">
                   {plant.type || '观叶植物'}
                 </span>
-                <h2 className="text-4xl font-black text-white">{plant.name}</h2>
+                <h2 className="text-4xl font-black text-white">{getDisplayName(plant)}</h2>
               </div>
             </div>
           </div>
           
           <div className="p-8 flex flex-col gap-6">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">名称</span>
+              <span className="text-lg font-black text-gray-900">{getDisplayName(plant)}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">品种</span>
+              <span className="text-lg font-black text-gray-900">{getDisplayVariety(plant)}</span>
+            </div>
             <div className="flex items-center gap-4">
                <div className="flex-1 flex flex-col gap-1">
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">守护天数</span>
-                  <span className="text-2xl font-black text-gray-900">{plant.days} 天</span>
+                  <span className="text-2xl font-black text-gray-900">{guardianDays} 天</span>
                </div>
                <div className="w-px h-10 bg-black/5" />
                <div className="flex-1 flex flex-col gap-1">
@@ -187,7 +227,14 @@ export default function PlantProfileDetail() {
                        <Calendar size={12} />
                        <span className="text-[10px] font-bold uppercase tracking-widest">领养日期</span>
                     </div>
-                    <span className="text-sm font-black text-gray-800">{plant.plantingDate || '2024-01-01'}</span>
+                    <span className="text-sm font-black text-gray-800">
+                      {(() => {
+                        const raw = plant.adoptedAt || plant.created_at || plant.plantingDate;
+                        if (!raw) return '—';
+                        const d = new Date(raw);
+                        return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('zh-CN');
+                      })()}
+                    </span>
                  </div>
                  <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-1.5 text-gray-400">

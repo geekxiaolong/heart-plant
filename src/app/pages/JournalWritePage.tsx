@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Send, Sparkles, BookOpen, Users, 
   Check, Edit3, ArrowRight, Feather, Save,
@@ -12,7 +12,10 @@ import { cn } from '../utils/cn';
 import { toast } from 'sonner';
 import { apiGet, apiPost } from '../utils/api';
 import { getCache, setCache } from '../utils/cache';
+import { findPlantByAnyId, getPrimaryPlantId } from '../utils/plantIdentity';
+import { hydrateJournalSubmission } from '../utils/recordRefresh';
 import { WebRTCPlayer, WebRTCPlayerRef } from '../components/WebRTCPlayer';
+import { getStreamWhepUrl } from '../utils/streamUrl';
 import { apiUrl, buildApiHeaders } from '../utils/api';
 
 interface JournalEntry {
@@ -42,6 +45,7 @@ export function JournalWritePage() {
   const { plantId } = useParams();
   const { theme, setTheme, themeConfig } = useEmotionalTheme();
   const isSoloMode = theme === 'solo';
+  const resolvedPlantId = getPrimaryPlantId(plantId);
   
   const [plantData, setPlantData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -61,7 +65,7 @@ export function JournalWritePage() {
     const fetchPlant = async () => {
       const cached = getCache<any[]>(`plants-current`, 60000);
       if (cached) {
-        const found = cached.find((p: any) => p.id === plantId);
+        const found = findPlantByAnyId(cached, resolvedPlantId || plantId);
         if (found) {
           setPlantData(found);
           setTheme(found.type);
@@ -73,7 +77,7 @@ export function JournalWritePage() {
         const data = await apiGet<any[]>('/plants');
         if (Array.isArray(data)) {
           setCache(`plants-current`, data);
-          const found = data.find((p: any) => p.id === plantId);
+          const found = findPlantByAnyId(data, resolvedPlantId || plantId);
           if (found) {
             setPlantData(found);
             setTheme(found.type);
@@ -89,7 +93,7 @@ export function JournalWritePage() {
       }
     };
     fetchPlant();
-  }, [plantId, setTheme]);
+  }, [plantId, resolvedPlantId, setTheme]);
 
   const owners = plantData?.owners || ['我'];
 
@@ -119,7 +123,7 @@ export function JournalWritePage() {
         },
         body: JSON.stringify({
           image: base64Image,
-          plantId: plantId
+          plantId: resolvedPlantId || plantId
         })
       });
 
@@ -187,17 +191,25 @@ export function JournalWritePage() {
     setIsSubmitting(true);
     try {
       await apiPost('/journal', {
-        plantId,
+        plantId: resolvedPlantId || plantId,
         title,
         style: selectedStyle,
         entries,
         timestamp: new Date().toISOString(),
       });
 
+      hydrateJournalSubmission({
+        plantId: resolvedPlantId || plantId,
+        originalId: plantData?.originalId,
+        title: title.trim(),
+        style: selectedStyle,
+        entries,
+      });
+
       toast.success(isSoloMode ? '成长笔记已保存 📖' : '合写日记已发布 💌');
       
       // Explicitly return to the interaction page of the plant
-      navigate(`/interaction`, { state: { plantId: plantId }, replace: true });
+      navigate(`/interaction`, { state: { plantId: resolvedPlantId || plantId, originalId: plantData?.originalId }, replace: true });
     } catch (error: any) {
       console.error('Error saving journal:', error);
       toast.error('保存失败：' + (error.message || '请重试'));
@@ -528,8 +540,8 @@ export function JournalWritePage() {
               <div className="flex-1 relative bg-black">
                 <WebRTCPlayer 
                   ref={playerRef}
-                  streamUrl={`http://192.168.92.162:8889/${plantData?.streamPath || 'heartplant'}/whep`}
-                  rtspUrl={plantData?.streamUrl || "rtsp://admin:reolink123@192.168.92.202:554"}
+                  streamUrl={getStreamWhepUrl(plantData?.streamPath)}
+                  rtspUrl={plantData?.streamUrl || (import.meta.env.VITE_DEFAULT_RTSP_URL || '')}
                   className="w-full h-full"
                 />
               </div>

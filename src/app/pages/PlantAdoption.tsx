@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ChevronLeft, Heart, Share2, Plus, Sparkles, 
   Smile, PenTool, Users, ArrowRight, Check,
@@ -9,30 +9,99 @@ import {
 } from 'lucide-react';
 import { useEmotionalTheme, EmotionalTheme, themes } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { apiGet, apiPost } from '../utils/api';
+import { buildLoginRedirectState } from '../utils/authRedirect';
+import { hydrateAdoptionCaches } from '../utils/adoptionRefresh';
 import { EmotionalRadarChart } from '../components/EmotionalRadarChart';
 import { GoldenSentenceCard } from '../components/GoldenSentenceCard';
 import { WebRTCPlayer } from '../components/WebRTCPlayer';
+import { getStreamWhepUrl } from '../utils/streamUrl';
+
+const ADOPTION_DRAFT_STORAGE_KEY = 'heartplant:adoption-draft';
+
+type AdoptionDraft = {
+  plantId: string;
+  step: number;
+  plantName: string;
+  selectedType: EmotionalTheme;
+  targetEmail: string;
+  updatedAt: number;
+};
+
+const ADOPTION_DRAFT_TTL = 1000 * 60 * 60 * 24;
+
+function readAdoptionDraft(plantId?: string) {
+  if (!plantId || typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(ADOPTION_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const draft = JSON.parse(raw) as Partial<AdoptionDraft>;
+    if (draft.plantId !== plantId) return null;
+    if (typeof draft.updatedAt !== 'number' || Date.now() - draft.updatedAt > ADOPTION_DRAFT_TTL) {
+      window.localStorage.removeItem(ADOPTION_DRAFT_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      plantId,
+      step: typeof draft.step === 'number' ? Math.min(Math.max(draft.step, 1), 3) : 1,
+      plantName: typeof draft.plantName === 'string' ? draft.plantName : '',
+      selectedType: (['solo', 'kinship', 'romance', 'friendship'] as EmotionalTheme[]).includes(draft.selectedType as EmotionalTheme)
+        ? (draft.selectedType as EmotionalTheme)
+        : 'solo',
+      targetEmail: typeof draft.targetEmail === 'string' ? draft.targetEmail : '',
+      updatedAt: draft.updatedAt,
+    } satisfies AdoptionDraft;
+  } catch (error) {
+    console.error('Failed to read adoption draft:', error);
+    return null;
+  }
+}
+
+function writeAdoptionDraft(draft: AdoptionDraft) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(ADOPTION_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch (error) {
+    console.error('Failed to persist adoption draft:', error);
+  }
+}
+
+function clearAdoptionDraft() {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.removeItem(ADOPTION_DRAFT_STORAGE_KEY);
+  } catch (error) {
+    console.error('Failed to clear adoption draft:', error);
+  }
+}
 
 export function PlantAdoption() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, session } = useAuth();
   const { setTheme, themeConfig } = useEmotionalTheme();
+  const draft = useMemo(() => readAdoptionDraft(id), [id]);
   
-  const [step, setStep] = useState(1); // 1: Detail, 2: Define, 3: Goal/Invite, 4: Ceremony/Complete
-  const [plantName, setPlantName] = useState('');
-  const [selectedType, setSelectedType] = useState<EmotionalTheme>('solo');
+  const [step, setStep] = useState(draft?.step ?? 1); // 1: Detail, 2: Define, 3: Goal/Invite, 4: Ceremony/Complete
+  const [plantName, setPlantName] = useState(draft?.plantName ?? '');
+  const [selectedType, setSelectedType] = useState<EmotionalTheme>(draft?.selectedType ?? 'solo');
   const [isInviting, setIsInviting] = useState(false);
-  const [targetEmail, setTargetEmail] = useState('');
+  const [targetEmail, setTargetEmail] = useState(draft?.targetEmail ?? '');
   const [isSending, setIsSending] = useState(false);
   const [ceremonyComplete, setCeremonyComplete] = useState(false);
+  const [adoptedPlantId, setAdoptedPlantId] = useState<string | null>(null); // 认领后的植物实例 id，用于邀请
   const [goal, setGoal] = useState('期待它开花');
   const [plant, setPlant] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -94,6 +163,38 @@ export function PlantAdoption() {
   const labels = getModeLabels();
 
   useEffect(() => {
+    setTheme(selectedType);
+  }, [selectedType, setTheme]);
+
+  useEffect(() => {
+    if (draft && (draft.step > 1 || draft.plantName || draft.targetEmail || draft.selectedType !== 'solo')) {
+      toast.info('已为你恢复上次未完成的认养进度');
+    }
+  }, [draft]);
+
+  useEffect(() => {
+    if (!id || ceremonyComplete || step >= 4) {
+      clearAdoptionDraft();
+      return;
+    }
+
+    const hasMeaningfulDraft = step > 1 || !!plantName.trim() || !!targetEmail.trim() || selectedType !== 'solo';
+    if (!hasMeaningfulDraft) {
+      clearAdoptionDraft();
+      return;
+    }
+
+    writeAdoptionDraft({
+      plantId: id,
+      step,
+      plantName,
+      selectedType,
+      targetEmail,
+      updatedAt: Date.now(),
+    });
+  }, [id, step, plantName, selectedType, targetEmail, ceremonyComplete]);
+
+  useEffect(() => {
     // Randomize sensors slightly for "live" feel
     if (isLiveVisible) {
       const interval = setInterval(() => {
@@ -139,50 +240,73 @@ export function PlantAdoption() {
       
       try {
         if (!session?.access_token) {
+          writeAdoptionDraft({
+            plantId: plant.id,
+            step,
+            plantName,
+            selectedType,
+            targetEmail,
+            updatedAt: Date.now(),
+          });
           toast.dismiss(loadingToast);
           toast.error('登录状态已失效，请重新登录');
-          navigate('/login');
+          navigate('/login', { state: buildLoginRedirectState(location), replace: true });
           return;
         }
 
-        // 1. FRONTEND CACHE CHECK
-        const myPlants = await apiGet<any[]>('/plants');
-        const duplicate = myPlants.find((p: any) => p.originalId === plant.id || p.id === plant.id);
-        
-        if (duplicate) {
-          toast.dismiss(loadingToast);
-          toast.info('你已经拥有这棵植物了');
-          setTimeout(() => navigate('/'), 1000);
-          return;
-        }
-
-        // 2. BACKEND API CALL
         const response: any = await apiPost<any>('/adopt', {
+          libraryId: plant.id,
           id: plant.id,
-          name: plantName || plant.name,
+          name: plantName || plant.name || plant.species,
+          species: plant.species || plant.name,
           type: selectedType,
           image: plant.imageUrl || plant.image,
           ownerName: user?.user_metadata?.name || user?.email?.split('@')[0] || '我'
         });
-        
+
         if (response.success === false) {
           toast.dismiss(loadingToast);
-          if (response.error === 'DUPLICATE_ADOPTION') {
-             toast.info(response.message);
-             setTimeout(() => navigate('/'), 1000);
-             return;
+          const msg = response.message || response.error || '认领失败';
+          if (msg === 'DUPLICATE_ADOPTION' || String(msg).includes('DUPLICATE_ADOPTION')) {
+            toast.error('认领被拒（旧版接口）。请在本机运行后端（deno task serve）或重新部署最新 API 后再试。');
+            return;
           }
-          throw new Error(response.message || '认领失败');
+          throw new Error(msg);
         }
 
+        hydrateAdoptionCaches({
+          userId: user?.id,
+          adoptedPlant: response,
+          originalId: plant.id,
+        });
         toast.dismiss(loadingToast);
         toast.success(labels.success);
-        // Immediately close the flow and return to home as requested
-        setTimeout(() => navigate('/'), 1200);
+
+        if (selectedType === 'solo') {
+          // 悦己：个人认领直接完成，返回首页
+          clearAdoptionDraft();
+          setTimeout(() => navigate('/', {
+            state: {
+              refreshMyPlants: true,
+              adoptedPlantId: response.id,
+              adoptedOriginalId: plant.id,
+              adoptedAt: Date.now(),
+            }
+          }), 1200);
+        } else {
+          // 亲情/爱情/友情：进入邀请认领页面
+          setAdoptedPlantId(response.id);
+          setStep(3);
+        }
       } catch (e: any) {
         toast.dismiss(loadingToast);
         console.error('Adoption flow error:', e);
-        toast.error(e.message || '认领流程遇到一点小问题，请稍后重试');
+        const msg = e?.message ?? '';
+        if (msg === 'DUPLICATE_ADOPTION' || msg.includes('DUPLICATE_ADOPTION')) {
+          toast.error('认领被拒（旧版接口）。请在本机运行后端（deno task serve）或重新部署最新 API 后再试。');
+          return;
+        }
+        toast.error(msg || '认领失败，请稍后重试');
       } finally {
         setIsAdopting(false);
       }
@@ -198,6 +322,7 @@ export function PlantAdoption() {
 
   const handleFinishSolo = async () => {
     // Adoption already happened in handleNext transition from step 2 to step 3
+    clearAdoptionDraft();
     setCeremonyComplete(true);
     toast.success('开启你的私人治愈时光 ✨');
     setTimeout(() => navigate('/'), 2000);
@@ -212,12 +337,23 @@ export function PlantAdoption() {
     setIsSending(true);
     try {
       if (!session?.access_token) {
-        toast.error('认证失败');
+        if (plant?.id) {
+          writeAdoptionDraft({
+            plantId: plant.id,
+            step,
+            plantName,
+            selectedType,
+            targetEmail,
+            updatedAt: Date.now(),
+          });
+        }
+        toast.error('登录状态已失效，请重新登录');
+        navigate('/login', { state: buildLoginRedirectState(location), replace: true });
         return;
       }
 
       const data = await apiPost<any>('/send-direct-invite', {
-        plantId: plant.id, // Now instance ID (already starting with plant: if we came through handleNext)
+        plantId: adoptedPlantId || plant.id,
         inviterId: user.id,
         inviterName: user.user_metadata?.name || user.email?.split('@')[0] || '我',
         targetEmail: targetEmail.trim().toLowerCase()
@@ -245,6 +381,7 @@ export function PlantAdoption() {
   const completeCeremony = async () => {
     // If we're here, it means we've already adopted (via handleNext) and possibly invited.
     // The plant instance already exists in the database.
+    clearAdoptionDraft();
     setCeremonyComplete(true);
     toast.success('结缘仪式圆满完成！🎉');
     setTimeout(() => navigate('/'), 2000);
@@ -291,8 +428,8 @@ export function PlantAdoption() {
                       className="w-full h-full bg-black relative"
                     >
                       <WebRTCPlayer 
-                        streamUrl={`http://192.168.92.202:8889/${plant.streamPath || 'heartplant'}/whep`} 
-                        rtspUrl={plant.streamUrl || 'rtsp://admin:reolink123@192.168.92.202:554'}
+                        streamUrl={getStreamWhepUrl(plant.streamPath)} 
+                        rtspUrl={plant.streamUrl || (import.meta.env.VITE_DEFAULT_RTSP_URL || '')}
                         className="w-full h-full"
                       />
                       {/* Live HUD Overlay */}

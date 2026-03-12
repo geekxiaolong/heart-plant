@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Wifi, WifiOff, Activity, Clock, Loader } from 'lucide-react';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 
 interface VideoConnectionStatusProps {

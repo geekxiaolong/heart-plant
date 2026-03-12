@@ -8,7 +8,7 @@ import { parseIsFollowingResponse, syncFollowingCache } from '../utils/follow';
 import { getCache, setCache } from '../utils/cache';
 import { getProfileCacheKey, getPublicProfilePath, normalizePublicProfile } from '../utils/profile';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 

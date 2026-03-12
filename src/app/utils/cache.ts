@@ -66,3 +66,17 @@ export const clearCache = (key?: string) => {
     }
   }
 };
+
+export const clearCacheByPrefix = (prefix: string) => {
+  Object.keys(cache).forEach((key) => {
+    if (key.startsWith(prefix)) delete cache[key];
+  });
+
+  if (!IS_BROWSER) return;
+
+  Object.keys(localStorage).forEach((storageKey) => {
+    if (storageKey === `hplant_cache_${prefix}` || storageKey.startsWith(`hplant_cache_${prefix}`)) {
+      localStorage.removeItem(storageKey);
+    }
+  });
+};

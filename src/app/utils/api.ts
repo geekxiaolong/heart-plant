@@ -7,9 +7,21 @@ import { supabase } from './supabaseClient';
 
 const STORAGE_BUCKET = 'make-4b732228-plants';
 
-const API_BASE_URL = (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1')
-  ? 'http://127.0.0.1:8000'
-  : `https://${projectId}.supabase.co/functions/v1/make-server-4b732228`;
+// 本地/局域网开发：localhost、127.0.0.1、192.168.x.x、10.x.x.x 均走本地 API，避免打到旧版 Edge（会返回 DUPLICATE_ADOPTION）
+const isLocalDev =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === 'localhost' ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(window.location.hostname) ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(window.location.hostname));
+const explicitApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE_URL = explicitApiBaseUrl
+  || (isLocalDev ? `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8000` : `https://${projectId}.supabase.co/functions/v1/make-server-4b732228`);
+
+/** Supabase Edge 只接受标准 JWT anon key，与 heart-plant-api 使用同一项目的 key；可用 VITE_SUPABASE_ANON_KEY 覆盖 */
+const EDGE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrc3ppZ3JhbGplcHRwZWlpbXpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MjkyMDEsImV4cCI6MjA4ODAwNTIwMX0.piPkMGZDQ6O4l-YhZwPIU-Fp5Q-UUwt5fwvYlKVu6x0';
 
 export function apiUrl(endpoint: string): string {
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
@@ -26,11 +38,18 @@ export function getStoragePublicUrl(path?: string | null): string {
 
 /**
  * 获取当前用户的 session token
+ * 先用 getSession 取当前会话（与 AuthContext 一致），若无再尝试 refreshSession，避免漏带 X-User-JWT 导致 401
  */
 async function getSessionToken(): Promise<string | null> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token || null;
+    if (session?.access_token) return session.access_token;
+    const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
+    if (error) {
+      console.error('Failed to refresh session:', error);
+      return null;
+    }
+    return refreshed?.access_token || null;
   } catch (error) {
     console.error('Failed to get session token:', error);
     return null;
@@ -39,16 +58,18 @@ async function getSessionToken(): Promise<string | null> {
 
 /**
  * 构建标准请求头
+ * 始终携带 Authorization: Bearer <anon_key>，否则 Supabase Edge 会返回 "Missing authorization header"；
+ * 若有登录态则同时携带 X-User-JWT 供后端识别用户。
  */
 export async function buildApiHeaders(includeContentType: boolean = false): Promise<Record<string, string>> {
   const token = await getSessionToken();
 
   const headers: Record<string, string> = {
-    'apikey': publicAnonKey,
+    'apikey': EDGE_ANON_KEY,
+    'Authorization': `Bearer ${EDGE_ANON_KEY}`,
   };
 
   if (token && token !== 'undefined' && token !== 'null') {
-    headers['Authorization'] = `Bearer ${token}`;
     headers['X-User-JWT'] = token;
   }
 

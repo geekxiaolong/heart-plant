@@ -1,8 +1,12 @@
-import { Navigate, useLocation } from "react-router";
-import { useAuth } from "../context/AuthContext";
-import { Loader2 } from "lucide-react";
+import type { ReactElement } from 'react';
+import { Navigate, useLocation } from 'react-router';
+import { Loader2 } from 'lucide-react';
 
-export function RequireAuth({ children }: { children: JSX.Element }) {
+import { useAuth } from '../context/AuthContext';
+import { routePaths } from '../router';
+import { buildLoginRedirectState } from '../utils/authRedirect';
+
+export function RequireAuth({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
   const location = useLocation();
 
@@ -15,10 +19,7 @@ export function RequireAuth({ children }: { children: JSX.Element }) {
   }
 
   if (!session) {
-    // Redirect them to the /login page, but save the current location they were
-    // trying to go to when they were redirected. This allows us to send them
-    // along to that page after they login, which is a nicer user experience.
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to={routePaths.login} state={buildLoginRedirectState(location)} replace />;
   }
 
   return children;

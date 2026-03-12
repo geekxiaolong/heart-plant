@@ -1,12 +1,13 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { motion as Motion, AnimatePresence } from 'motion/react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Sprout, Mail, Lock, Eye, EyeOff, Loader2, Heart, ArrowRight, User } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
-import { apiUrl } from '../utils/api';
-import { publicAnonKey } from '/utils/supabase/info';
+import { apiUrl, buildApiHeaders } from '../utils/api';
+import { routePaths } from '../router';
+import { resolveRedirectTarget } from '../utils/authRedirect';
 
 export function UserLogin() {
   const [isLogin, setIsLogin] = useState(true);
@@ -16,7 +17,10 @@ export function UserLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { session } = useAuth();
+
+  const redirectTo = resolveRedirectTarget(location.state);
 
   const loginWithPassword = async () => {
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -31,7 +35,7 @@ export function UserLogin() {
 
     if (data.session) {
       toast.success('欢迎回到心植世界');
-      navigate('/');
+      navigate(redirectTo, { replace: true });
       return true;
     }
 
@@ -40,9 +44,9 @@ export function UserLogin() {
 
   useEffect(() => {
     if (session) {
-      navigate('/');
+      navigate(redirectTo, { replace: true });
     }
-  }, [session, navigate]);
+  }, [session, navigate, redirectTo]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,24 +57,23 @@ export function UserLogin() {
         await loginWithPassword();
       } else {
         // Registration logic via custom server route to enable auto-confirm
+        const headers = await buildApiHeaders(true);
         const response = await fetch(apiUrl('/signup'), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': publicAnonKey
-          },
+          headers,
           body: JSON.stringify({ email, password, name })
         });
 
-        const result = await response.json();
+        const result = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          if (result.code === 'USER_ALREADY_EXISTS' || result.error?.includes('already been registered')) {
+          if (result.code === 'USER_ALREADY_EXISTS' || result.error?.includes('already been registered') || result.error?.includes('已被注册')) {
             toast.info('该邮箱已被注册，正在为您切换到登录模式...');
             setIsLogin(true);
             await loginWithPassword();
           } else {
-            toast.error(result.error || '注册失败');
+            const msg = result.error || result.details || result.message || '注册失败';
+            toast.error(typeof msg === 'string' ? msg : '注册失败');
           }
           return;
         }

@@ -1,16 +1,13 @@
-import React, { useEffect } from 'react';
-import { Outlet, NavLink, useLocation, useNavigate, Navigate } from 'react-router';
-import { Home, Zap, Heart, User, Sparkles, LoaderCircle } from 'lucide-react';
+import React from 'react';
+import { Outlet, NavLink, useLocation } from 'react-router';
+import { Home, Zap, User, Sparkles } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
 import { cn } from '../utils/cn';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export function Layout() {
   const { theme, themeConfig } = useEmotionalTheme();
-  const { session, loading } = useAuth();
   const location = useLocation();
-  const navigate = useNavigate();
   const isFullPage = 
     location.pathname.startsWith('/adopt') || 
     location.pathname.startsWith('/ceremony') || 
@@ -20,24 +17,6 @@ export function Layout() {
     location.pathname.startsWith('/video-status') ||
     location.pathname.startsWith('/plant-profile') ||
     location.pathname.startsWith('/achievements');
-
-  useEffect(() => {
-    if (!loading && !session && location.pathname !== '/login' && !location.pathname.startsWith('/join/')) {
-      navigate('/login', { replace: true });
-    }
-  }, [session, loading, location.pathname, navigate]);
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-white">
-        <LoaderCircle className="animate-spin text-green-500" size={32} />
-      </div>
-    );
-  }
-
-  if (!session && location.pathname !== '/login' && !location.pathname.startsWith('/join/')) {
-    return null;
-  }
 
   const navItems = [
     { path: '/', icon: Home, label: '首页' },

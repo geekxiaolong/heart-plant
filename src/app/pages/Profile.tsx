@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useEmotionalTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, NavLink } from 'react-router';
 import { useAuth, supabase } from '../context/AuthContext';
 import { toast } from 'sonner';
